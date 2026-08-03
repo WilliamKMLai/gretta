@@ -27,6 +27,7 @@
  * That is exactly the traffic ADR-028 governs, which is why it is opt-in even
  * for a developer.
  */
+/// <reference types="node" />
 import { describe, expect, it } from 'vitest';
 import { createCrossrefClient } from './crossref';
 import { createOpenAlexClient } from './openalex';

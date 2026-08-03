@@ -41,7 +41,7 @@ interface ErrorOptions {
 export class OfficeError extends Error {
   readonly kind: OfficeErrorKind;
   readonly code?: string;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: OfficeErrorKind, message: string, options?: ErrorOptions) {
     super(message);
@@ -56,7 +56,7 @@ export class OfficeError extends Error {
 export class OllamaError extends Error {
   readonly kind: OllamaErrorKind;
   readonly code?: string;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: OllamaErrorKind, message: string, options?: ErrorOptions) {
     super(message);
@@ -71,7 +71,7 @@ export class OllamaError extends Error {
 export class StreamError extends Error {
   readonly kind: StreamErrorKind;
   readonly partialText: string;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: StreamErrorKind, message: string, partialText: string, cause?: unknown) {
     super(message);
@@ -85,7 +85,7 @@ export class StreamError extends Error {
 /** Persistence failures (thrown only by services/storage). */
 export class StorageError extends Error {
   readonly kind: StorageErrorKind;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: StorageErrorKind, message: string, cause?: unknown) {
     super(message);
@@ -104,7 +104,7 @@ export class StorageError extends Error {
 export class KbError extends Error {
   readonly kind: KbErrorKind;
   readonly code?: string;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: KbErrorKind, message: string, options?: ErrorOptions) {
     super(message);
@@ -126,7 +126,7 @@ export class LiteratureError extends Error {
   /** Which source failed, so the pane can name it instead of failing generically. */
   readonly source: string;
   readonly code?: string;
-  readonly cause?: unknown;
+  override readonly cause?: unknown;
 
   constructor(kind: LiteratureErrorKind, source: string, message: string, options?: ErrorOptions) {
     super(message);

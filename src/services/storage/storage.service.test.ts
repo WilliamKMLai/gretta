@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { MockInstance } from 'vitest';
 import { StorageError } from '../../types/errors';
 import { STORAGE_KEYS, STORAGE_VERSIONS } from './keys';
 import { createLocalStorageService } from './storage.service';
@@ -17,7 +18,7 @@ function memoryBacking(): StorageBacking & { map: Map<string, string> } {
   };
 }
 
-let warnSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: MockInstance<typeof console.warn>;
 beforeEach(() => {
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });

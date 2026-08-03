@@ -26,7 +26,7 @@ export const useUiStore = create<UiState>()((set) => ({
   setDraft: (draft) => {
     set({ draft });
   },
-  contextSource: 'selection',
+  contextSource: 'none',
   setContextSource: (contextSource) => {
     set({ contextSource });
   },

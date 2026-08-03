@@ -1,8 +1,9 @@
+import type { MockInstance } from 'vitest';
 import { STORAGE_KEYS, STORAGE_VERSIONS } from '../../services/storage';
 import { DEFAULT_SETTINGS, useSettingsStore } from './settings.store';
 
 const initial = useSettingsStore.getState();
-let warnSpy: ReturnType<typeof vi.spyOn>;
+let warnSpy: MockInstance<typeof console.warn>;
 
 beforeEach(() => {
   window.localStorage.clear();

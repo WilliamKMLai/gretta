@@ -78,7 +78,7 @@ if (nodeMajor >= 22) {
   ok(`Node ${process.versions.node}`);
 } else {
   fail(`Node ${process.versions.node} is too old — GRETTA needs 22 or newer.`);
-  hint('Install from https://nodejs.org, or `brew install node` on a Mac.');
+  hint('Install Node from https://nodejs.org, or run this in Terminal: brew install node');
 }
 
 step('2. Package manager');
@@ -92,7 +92,7 @@ if (pnpmVersion !== null) {
     ok('pnpm installed');
   } catch {
     fail('Could not install pnpm automatically.');
-    hint('Run: npm install -g pnpm');
+    hint('Run this in Terminal: npm install -g pnpm');
   }
 }
 
@@ -105,8 +105,7 @@ if (existsSync(join(repoRoot, 'node_modules', '.bin'))) {
     ok('Dependencies installed');
   } catch {
     fail('`pnpm install` failed.');
-    hint('If it failed building better-sqlite3, you likely need Xcode command line');
-    hint('tools: xcode-select --install');
+    hint('If it failed building better-sqlite3, run this in Terminal: xcode-select --install');
   }
 }
 
@@ -129,7 +128,7 @@ if (existsSync(join(certDir, 'localhost.crt'))) {
     ok('Certificate installed and trusted');
   } else {
     fail('Certificate installation did not produce a certificate.');
-    hint('Run `pnpm certs:install` on its own to see the full error.');
+    hint('Run this in Terminal: pnpm certs:install — to see the full error.');
     hint('It needs administrator rights to trust the certificate authority.');
   }
 }
@@ -138,7 +137,7 @@ step('5. Ollama');
 const ollamaVersion = tryRun('ollama', ['--version']);
 if (ollamaVersion === null) {
   fail('Ollama is not installed. GRETTA cannot generate anything without it.');
-  hint('Install from https://ollama.com, then: ollama pull llama3.2');
+  hint('Install Ollama from https://ollama.com, then run this in Terminal: ollama pull llama3.2');
 } else {
   ok(ollamaVersion.replace(/^ollama version is /iu, 'Ollama '));
 
@@ -149,16 +148,16 @@ if (ollamaVersion === null) {
     .filter((line) => line.trim() !== '');
   if (lines.length === 0) {
     warn('No models installed.');
-    hint('A text model is required:   ollama pull llama3.2');
-    hint('An embedding model powers the knowledge base and literature ranking:');
-    hint('                            ollama pull nomic-embed-text');
+    hint('A text model is required — run this in Terminal: ollama pull llama3.2');
+    hint('An embedding model powers the knowledge base and literature ranking —');
+    hint('run this in Terminal: ollama pull nomic-embed-text');
   } else {
     ok(`${String(lines.length)} model${lines.length === 1 ? '' : 's'} installed`);
     // The embedding model is easy to forget: without one, the knowledge base
     // cannot index and literature results fall back to word overlap.
     if (!/embed/iu.test(models ?? '')) {
       warn('None of them looks like an embedding model.');
-      hint('Run: ollama pull nomic-embed-text');
+      hint('Run this in Terminal: ollama pull nomic-embed-text');
     }
   }
 }
@@ -175,9 +174,9 @@ if (isMac) {
 
 console.log(`\n${BOLD}${failures === 0 ? 'Ready.' : 'Setup incomplete.'}${RESET}`);
 if (failures === 0) {
-  console.log(`\nNext: ${BOLD}${isMac ? 'pnpm dev:mac' : 'pnpm dev'}${RESET}`);
+  console.log(`\nNext: run this in Terminal: ${BOLD}${isMac ? 'pnpm dev:mac' : 'pnpm dev'}${RESET}`);
   console.log(
-    `${DIM}Then open Word, restart it once when prompted, and find GRETTA under Home.${RESET}\n`,
+    `${DIM}Then open Word, restart it once when prompted, go to the Home tab, and find GRETTA under Add-ins.${RESET}\n`,
   );
 } else {
   const noun = failures === 1 ? 'thing above needs' : 'things above need';

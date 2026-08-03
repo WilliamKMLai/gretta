@@ -62,7 +62,8 @@ have seen and approved. Your document text is never transmitted.
 
 ## Prerequisites
 
-- **Node.js ≥ 22.13** and **pnpm** (`npm i -g pnpm`) — pnpm 11 requires Node 22.13+
+- **Node.js ≥ 22.13**
+- **pnpm** (`npm i -g pnpm`) — pnpm 11 requires Node 22.13+
 - **Ollama** running locally with at least one model pulled (`ollama pull llama3.1`)
 - **Microsoft Word** — Windows, Mac, or word on the web (Microsoft 365)
 
