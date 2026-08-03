@@ -36,5 +36,16 @@ export default defineConfig({
      */
     exclude: ['**/node_modules/**', '**/dist/**', 'src/**/*.smoke.test.ts'],
     css: false,
+    /*
+     * Vitest 4's rewritten `forks` pool has open reports of a worker process
+     * dying mid-run under CI-like load, surfacing as an opaque "[vitest-pool]:
+     * Worker forks emitted error" with no test-level failure attached (see
+     * vitest-dev/vitest#9762, #8766, #8861, #8968). It hit us on the one file
+     * that loads a native addon (better-sqlite3) — nothing wrong with that
+     * file, the fork running it just never reported back. Capping concurrency
+     * gives forked workers more headroom on GitHub's runners; raise this once
+     * upstream stabilizes the new pool.
+     */
+    maxWorkers: 2,
   },
 });

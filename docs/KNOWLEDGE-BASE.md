@@ -60,6 +60,51 @@ That single property covers both patterns you're likely to want:
 5. **Bind the open document.** Tick the collections this document should use. Generate as
    usual; relevant excerpts are added to the prompt and listed under **Sources**.
 
+## Verifying it's working
+
+A quick end-to-end check, using a throwaway file with a fact GRETTA cannot already
+know, so a correct answer can only have come from retrieval.
+
+1. **Make a test folder** with one file, `buffer.txt`, containing something
+   fictional and specific:
+
+   ```
+   The Vantrellium buffer must be held at 47.3 degrees Celsius during the second wash.
+   ```
+
+   "Vantrellium" isn't real, so no model has this fact from training — if GRETTA
+   gets it right, the excerpt came from the file.
+
+2. **Pull an embedding model and turn the feature on** — Setup steps 1–3 above
+   (`ollama pull nomic-embed-text`, `pnpm kb` or `pnpm dev:mac`, then the
+   **Knowledge base** switch in Settings). Confirm the **Embedding model** dropdown
+   that appears underneath shows the model you pulled, with no "not installed" hint.
+
+3. **Set the KB path.** In the 📚 _Knowledge base_ tab, add a collection pointing at
+   the test folder's absolute path (Setup step 4).
+
+4. **Confirm indexing.** Watch the collection card: the phase label should move
+   through _Scanning folders…_ / _Indexing…_ to **"Ready to search,"** with a
+   non-zero file/excerpt count and an "indexed `<relative time>`" stamp. If it says
+   "Paused — Ollama unreachable" or the panel shows "Companion not running," see
+   Troubleshooting below before continuing.
+
+5. **Bind and ask.** Tick **"Use in this document"** on the collection, then prompt:
+
+   > What temperature must the Vantrellium buffer be held at during the second wash?
+
+   Generate. The answer should state **47.3°C**, with a **Sources** line citing
+   `buffer.txt`.
+
+6. **Prove it's live, not memorized.** Edit `buffer.txt` and change 47.3 to any
+   other made-up number, save it, then either wait a moment for the folder watcher
+   or click the collection's reindex (sync-arrow) icon. Once the "indexed" stamp
+   updates, ask the exact same question again in a fresh generation. The answer
+   should now report your new number — confirming GRETTA re-read the file from disk
+   rather than reusing a cached or hallucinated value.
+
+If any step doesn't match what's described, see Troubleshooting below.
+
 ## What gets indexed
 
 | Type                       | Citation granularity |

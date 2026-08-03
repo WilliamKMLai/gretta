@@ -84,42 +84,11 @@ The pane is served from your machine's `https://localhost:3000`, so the dev serv
 
 ---
 
-## Removing the dev add-in
+## Uninstalling
 
 - **Windows:** delete the manifest from the shared folder and/or remove the catalog from Trusted Add-in Catalogs; restart Word.
 - **Mac:** delete the manifest from the `wef` folder; restart Word.
 - **Web:** uploaded add-ins only last for the session — just reload.
-
-## Phase 2 spike checklist (ADR-008)
-
-After sideloading on each host you have access to, open the pane and run the **Ollama connection check**. Record the outcomes in `DECISIONS.md` → ADR-008:
-
-| Host                       | URL tested                                 | Expected                               | Result |
-| -------------------------- | ------------------------------------------ | -------------------------------------- | ------ |
-| Word for Windows           | `http://127.0.0.1:11434`                   | ✅ direct connection works             | ☐      |
-| Word for Mac               | `http://127.0.0.1:11434`                   | ⚠️ blocked/unreachable (mixed content) | ☐      |
-| Word for Mac               | `https://localhost:11435` via `pnpm proxy` | ✅ works through the proxy             | ☐      |
-| Word on the web (Chromium) | `http://127.0.0.1:11434`                   | ✅ direct connection works             | ☐      |
-
-## The old icon is still showing
-
-Office caches add-in icons **by URL**, and it caches them hard. GRETTA's icon files are
-therefore named `gretta-icon-*.png` rather than `icon-*.png`: the pre-rebrand build used the
-latter, so reusing those names meant Office kept serving its cached copy of the old logo
-forever, on every machine that had ever run the old add-in.
-
-If an old icon still appears after updating:
-
-1. **Remove the previous add-in.** The rebrand issued a new manifest GUID (ADR-024), so Word
-   treats GRETTA and its predecessor as two separate add-ins and the old entry stays
-   registered until you remove it. Delete its manifest from the sideload folder and restart
-   Word.
-2. **Clear the Office cache**, then restart Word:
-   - **Mac:** `rm -rf ~/Library/Containers/com.microsoft.Word/Data/Library/Caches/`
-   - **Windows:** delete the contents of `%LOCALAPPDATA%\Microsoft\Office\16.0\Wef\`
-3. **Confirm the file is actually served** — with the dev server running, open
-   `https://localhost:3000/assets/gretta-icon-32.png` in a browser. If the browser shows the
-   new mark, the manifest and the server are correct and anything stale is Office's cache.
 
 ## Troubleshooting
 

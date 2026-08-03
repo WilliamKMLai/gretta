@@ -60,6 +60,9 @@ have seen and approved. Your document text is never transmitted.
 
 **Open by design.** MIT-licensed and built to be read, forked, and extended.
 
+> Looking for architecture, ADRs, or a specific feature guide? Jump to the
+> [Documentation](#documentation) index.
+
 ## Prerequisites
 
 - **Node.js ≥ 22.13**
@@ -149,6 +152,14 @@ after the manifest changes. On a normal day, just open Word and go to
 single most common cause of a blank pane or a failed connection check. Then check step 1,
 that Ollama is running.
 
+## Uninstalling
+
+- **Windows:** delete the manifest from the shared folder and/or remove the catalog from Trusted Add-in Catalogs; restart Word.
+- **Mac:** delete the manifest from Word's `wef` folder; restart Word.
+- **Web:** uploaded add-ins only last for the session — just reload.
+
+Full steps and troubleshooting: [docs/SIDELOADING.md](docs/SIDELOADING.md#uninstalling).
+
 ## How the knowledge base changes answers
 
 When a collection is bound to the document, retrieved excerpts are added to the
@@ -165,25 +176,19 @@ silently blending the two is the failure worth preventing.
 
 Turn the knowledge base off, or unbind the collection, for general questions.
 
+Full setup, collections, and binding details: [docs/KNOWLEDGE-BASE.md](docs/KNOWLEDGE-BASE.md).
+
 ## Literature search
 
 Off by default. Turning on a source under **Settings → Literature** is what
-permits any outbound request; nothing reaches the internet until you do.
+permits any outbound request; nothing reaches the internet until you do. GRETTA
+drafts a search query from a passage **on your machine**, then searches PubMed,
+bioRxiv, medRxiv, and OpenAlex — never your document, excerpts, or prompts, and
+only the query you have seen and approved.
 
-**OpenAlex needs a free API key.** As of February 2026 OpenAlex requires one —
-keys replaced the older email-based pool — and an unkeyed caller gets a small
-trial allowance per day before requests start failing, which looks like a search
-that suddenly finds nothing. Create an account at
-[openalex.org](https://openalex.org) and paste the key from _Settings → API_
-into GRETTA's Literature settings. The data itself remains free and CC0; the key
-covers the query service.
-
-The other sources need nothing. PubMed and Crossref accept an optional contact
-address, which buys faster service and is yours to give or withhold.
-
-Note what search does **not** do: it never transmits your document, your
-excerpts, or your prompts — only a query you have seen in its final form and
-sent deliberately. The results panel can show exactly what each source received.
+Source-by-source setup (OpenAlex's API key requirement, optional contact
+addresses for PubMed/Crossref, retraction checking) and how to read results:
+[docs/LITERATURE-SEARCH.md](docs/LITERATURE-SEARCH.md).
 
 ## Connecting to Ollama
 
@@ -220,6 +225,7 @@ deeper; not necessary just to use it.
 | [docs/PROMPTS.md](docs/PROMPTS.md)               | What each of the 12 built-in prompts does, and how to write your own          |
 | [docs/SIDELOADING.md](docs/SIDELOADING.md)       | Installing the dev build into Word on each platform                           |
 | [docs/KNOWLEDGE-BASE.md](docs/KNOWLEDGE-BASE.md) | Setting up and using the local knowledge base (RAG)                           |
+| [docs/LITERATURE-SEARCH.md](docs/LITERATURE-SEARCH.md) | Setting up and running literature search, and reading its results                   |
 
 ## Scripts
 
