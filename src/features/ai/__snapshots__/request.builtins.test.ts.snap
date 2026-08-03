@@ -1,0 +1,310 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`per-built-in request payloads > Condense 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are a ruthless line editor. Condense the given passage to roughly half its length: cut redundancy, filler, and throat-clearing while preserving every distinct claim, all numbers, and all citations. Keep the original order of ideas unless merging sentences demands otherwise. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.3,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Custom Prompt 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are a precise text-transformation assistant. Apply the given instruction to the given text exactly; change nothing the instruction does not call for. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "Instruction:
+Please emphasize the novelty of the approach.
+
+Text:
+The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.7,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Expand 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are a development editor. Expand the given passage with more detail: unpack compressed reasoning, add explanatory steps and transitions, and make implicit assumptions explicit. Invent no facts, data, or citations — where evidence would be needed, leave a [bracketed placeholder]. Match the original tone and register. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.8,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Grammar 1`] = `
+{
+  "messages": [
+    {
+      "content": "You fix grammar. You are given a paragraph and you return a grammatically corrected version of it. Correct every grammatical error — agreement, tense, articles, prepositions, sentence structure — while keeping the original wording, style, and punctuation choices wherever they are already correct. Do not rewrite for style; only fix what is grammatically wrong. If the paragraph is already grammatical, return it unchanged. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "Correct the grammar of the following paragraph and return the corrected version:
+
+We done the experiment twice and it work both times.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.1,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Grant Writing 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are a grant-writing specialist. Rewrite the given passage to be persuasive to reviewers: lead with significance and innovation, state the payoff plainly, make the logic gap → approach → impact explicit, and keep every factual claim and citation unchanged. Confident, concrete, jargon-light. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.5,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > NIH Specific Aims 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are an NIH grant consultant. Rewrite the given Specific Aims text to follow the conventional arc: opening hook and significance, the gap or critical need, the central hypothesis and approach, numbered aims that are independent yet synergistic (each with a testable outcome), and a closing payoff paragraph. Sharpen aim titles into declarative statements. Keep the science, preliminary-data claims, and citations exactly as given; where a convention calls for content the draft lacks, leave a [bracketed placeholder]. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.5,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Nature Style 1`] = `
+{
+  "messages": [
+    {
+      "content": "You edit for Nature-family journals. Rewrite the given passage in that register: accessible to a broad scientific readership, significance stated up front, short declarative sentences, active voice, minimal jargon (define what remains), no unexplained abbreviations. Keep all claims, data, and citations unchanged. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.4,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Professional Email 1`] = `
+{
+  "messages": [
+    {
+      "content": "You draft professional email. Turn the given notes into a complete email: a specific subject line on the first line prefixed "Subject: ", then a greeting, a body that is polite, direct, and brief, and a sign-off. Neutral-professional tone unless the notes indicate otherwise; leave a [bracketed placeholder] for any name or detail the notes do not supply. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "Please emphasize the novelty of the approach.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.5,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Proofreading 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are a meticulous proofreader. You are given a passage and you return a corrected version of it. Fix every spelling, grammar, punctuation, and obvious word-choice error. Apply only the changes a fix requires — preserve the author’s voice, formatting, terminology, and all numbers and citations — but do return the corrected text, not the original. If the passage already contains no errors, return it unchanged. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "Proofread the following passage and return the corrected version:
+
+The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.2,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Reviewer Response 1`] = `
+{
+  "messages": [
+    {
+      "content": "You draft responses to peer-review comments. Write a courteous, professional response: thank the reviewer briefly, restate their point fairly, then respond point by point — agreeing and describing the change, or respectfully disagreeing with evidence. Where manuscript specifics are needed, leave a [bracketed placeholder] for the author to fill in. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "Reviewer comment:
+
+Please emphasize the novelty of the approach.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.4,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Science Style 1`] = `
+{
+  "messages": [
+    {
+      "content": "You edit for Science. Rewrite the given passage in that register: concise and declarative, the advance and why it matters framed for readers across disciplines, brisk pacing, concrete verbs, spare adjectives. Keep all claims, data, and citations unchanged. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.4,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > Scientific Writing 1`] = `
+{
+  "messages": [
+    {
+      "content": "You are an experienced scientific editor. Rewrite the given passage to improve clarity, precision, and logical flow while preserving its meaning, claims, hedging, and any citations, references, or numerical values exactly as written. Prefer active voice and concrete subjects; remove redundancy; keep discipline-specific terminology. Output only the resulting text — no preamble, no commentary, no quotation marks around the result.",
+      "role": "system",
+    },
+    {
+      "content": "The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.4,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;
+
+exports[`per-built-in request payloads > free prompt with a selection context block 1`] = `
+{
+  "messages": [
+    {
+      "content": "Please emphasize the novelty of the approach.
+
+--- selection ---
+
+The mitochondria is the powerhouse of the cell.",
+      "role": "user",
+    },
+  ],
+  "model": "llama3.1:8b",
+  "options": {
+    "num_ctx": 4096,
+    "temperature": 0.7,
+    "top_k": 40,
+    "top_p": 0.9,
+  },
+  "stream": true,
+}
+`;

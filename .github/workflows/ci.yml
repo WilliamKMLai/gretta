@@ -1,0 +1,48 @@
+# GRETTA CI — the lighter gate (typecheck + unit/component tests).
+#
+# Intentionally not the full `pnpm check`: lint/format run fast locally and in
+# pre-commit, and `build` is covered by the type check plus the tests here, so
+# this stays quick on every push. To promote it to the full gate later, swap the
+# two run steps for a single `pnpm check`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One in-flight run per branch/PR; newer pushes cancel older runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # pnpm 11 requires Node >= 22.13 (its store uses the built-in
+          # node:sqlite module, absent on Node 20). Node 20 is also being
+          # deprecated on GitHub runners.
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test

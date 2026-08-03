@@ -1,0 +1,19 @@
+/* Base document reset for the task pane. All component styling is Griffel
+   (makeStyles) inside React; this file only pins the frame. The pane never
+   page-scrolls: the app shell's <main> is the single scroll region (see the
+   scroll contract in app/App.tsx). */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}

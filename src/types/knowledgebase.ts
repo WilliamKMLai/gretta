@@ -1,0 +1,149 @@
+/**
+ * Knowledge-base (RAG) domain + companion wire contract (ARCHITECTURE.md §6,
+ * §16; DECISIONS.md ADR-020, revised for the multi-collection model).
+ *
+ * A knowledge base is a named *collection* backed by one or more folders with
+ * its own embedding model. A document binds to a subset of collections; the
+ * binding is persisted in the .docx via `Office.context.document.settings`.
+ *
+ * These shapes are shared across three realms and therefore live in the
+ * dependency-free `types/` layer:
+ *   - the webview KB service (`services/knowledgebase`) validates companion
+ *     responses against them (Zod, mirroring `services/ollama/schemas.ts`);
+ *   - the `ai` context-provider pipeline surfaces `RetrievedChunk[]` as
+ *     provenance in `ResponseView`;
+ *   - the Node companion (`scripts/kb/*`) imports them `import type` (erased at
+ *     runtime), so one definition governs both sides of the HTTP boundary.
+ *
+ * This file is intentionally type-only: no runtime value is exported, so the
+ * companion never value-imports across the src/scripts realm boundary (ADR-020).
+ * The capacity ceiling is a companion-owned constant; the companion reports
+ * `maxChunks`/`capacityPct` as fields the pane reads.
+ */
+
+/** Where in a source document a chunk came from — drives the citation label. */
+export interface ChunkLocator {
+  /** 1-based page number for paginated sources (PDF); null otherwise. */
+  page: number | null;
+  /** 1-based paragraph index within the source; null when unknown. */
+  paragraph: number | null;
+}
+
+/** One retrieved chunk with the provenance needed to cite it. */
+export interface RetrievedChunk {
+  /** Id of the collection this chunk was retrieved from. */
+  collectionId: string;
+  /** Folder-relative path of the source file (never an absolute host path). */
+  source: string;
+  /** Position of the chunk within its source. */
+  locator: ChunkLocator;
+  /** The chunk text injected into the prompt / shown in the sources list. */
+  text: string;
+  /** Cosine similarity to the query, 0..1. */
+  score: number;
+}
+
+/** Lifecycle of a collection's index, surfaced in the KB panel + banner. */
+export type IndexPhase =
+  | 'disabled' // no folders configured / feature off
+  | 'idle' // configured, nothing to do
+  | 'scanning' // enumerating the folders
+  | 'indexing' // parsing + embedding files
+  | 'ready' // fully indexed and queryable
+  | 'ollama-unreachable' // embeddings blocked: Ollama down (non-fatal)
+  | 'error'; // an indexing failure the user should see
+
+/**
+ * A single line of a collection's NDJSON progress stream (see progress.mts).
+ * The collection is identified by the stream endpoint, so events stay lean.
+ */
+export type IndexProgressEvent =
+  | { type: 'phase'; phase: IndexPhase }
+  | { type: 'scan'; totalFiles: number }
+  | { type: 'file'; path: string; filesDone: number; totalFiles: number }
+  | { type: 'skip'; path: string; reason: string }
+  | { type: 'error'; path: string | null; message: string }
+  | { type: 'done'; chunkCount: number; fileCount: number };
+
+/** A collection's static configuration — what the user sets (`POST /collections`). */
+export interface CollectionConfig {
+  /** Stable id (slug/uuid); also the key retrieval scopes and bindings use. */
+  id: string;
+  /** Human label shown in the panel and bindings. */
+  name: string;
+  /** One or more absolute source folders (never leave the host). */
+  folders: string[];
+  /** Per-collection embedding model; changing it forces a full re-index. */
+  embeddingModel: string;
+}
+
+/** A collection's live status = config + index state + capacity. */
+export interface CollectionStatus {
+  id: string;
+  name: string;
+  folders: string[];
+  embeddingModel: string;
+  phase: IndexPhase;
+  /** Files successfully indexed. */
+  fileCount: number;
+  /** Chunks currently queryable. */
+  chunkCount: number;
+  /** Companion-owned ceiling used for the capacity readout (ADR-020: 30 000). */
+  maxChunks: number;
+  /** `chunkCount / maxChunks` as a 0..100 percentage the UI surfaces. */
+  capacityPct: number;
+  /** Files skipped (unsupported format / parse failure) with reasons. */
+  skipped: { path: string; reason: string }[];
+  /** ISO timestamp of the last completed index, or null. */
+  lastIndexedAt: string | null;
+  /** Human-readable detail for `error` / `ollama-unreachable` phases. */
+  message: string | null;
+}
+
+/** `GET /collections` — every collection the companion manages. */
+export interface KnowledgeBaseSummary {
+  collections: CollectionStatus[];
+}
+
+/** Reported by `GET /health` — the reachability probe (mirrors Ollama's). */
+export interface KnowledgeBaseHealth {
+  name: 'gretta-kb';
+  version: string;
+  ok: boolean;
+  /**
+   * Where the companion keeps its index, reported so the pane can say so.
+   *
+   * It defaults to `~/.gretta`, outside the repository — deleting and
+   * reinstalling the project leaves every collection intact, which is
+   * surprising enough that it should be stated rather than discovered.
+   * Optional because an older companion will not send it.
+   */
+  dataDir?: string | undefined;
+}
+
+/** Global query-time defaults on the companion (not per collection). */
+export interface QueryDefaults {
+  /** Chunks retrieved per query. */
+  topK: number;
+  /** Minimum cosine score for an injected chunk, 0..1. */
+  minScore: number;
+}
+
+/** `POST /query` request body. */
+export interface QueryRequest {
+  query: string;
+  /** Collections to search; empty retrieves nothing (no binding → no RAG). */
+  collectionIds: string[];
+  /** Overrides the configured `topK` for this call when present. */
+  k?: number;
+}
+
+/** `POST /query` response body. Provenance carries the collection per chunk. */
+export interface QueryResponse {
+  chunks: RetrievedChunk[];
+}
+
+/** Persisted in the .docx via Office settings — which collections this doc uses. */
+export interface DocumentBinding {
+  collectionIds: string[];
+}
