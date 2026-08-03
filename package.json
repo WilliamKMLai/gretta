@@ -34,7 +34,8 @@
     "certs:install": "office-addin-dev-certs install",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build",
     "smoke:boot": "node scripts/boot-smoke.mjs",
-    "smoke:lit": "GRETTA_LIVE_SMOKE=1 vitest run --config vitest.smoke.config.ts"
+    "smoke:lit": "GRETTA_LIVE_SMOKE=1 vitest run --config vitest.smoke.config.ts",
+    "test:kb-native": "vitest run --config vitest.kb-native.config.ts"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.60.0",

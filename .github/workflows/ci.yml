@@ -41,22 +41,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Diagnostic: scripts/kb/store.sqlite.test.mts (the only file loading the
-      # better-sqlite3 native addon) has twice crashed its Vitest worker here —
-      # "Worker exited unexpectedly" under the forks pool, then an actual
-      # SIGSEGV under threads. Both pools failing points away from Vitest and
-      # toward better-sqlite3's bundled linux-x64 prebuild itself. This step
-      # deletes that prebuild and forces a from-source rebuild via node-gyp, so
-      # the test run below exercises a freshly compiled binary instead. Remove
-      # this step (and the comment above `test` in vitest.config.ts) once we
-      # know whether that was the actual cause.
-      - name: Rebuild better-sqlite3 from source
-        run: |
-          pkg_dir=$(find node_modules/.pnpm -maxdepth 1 -iname "better-sqlite3@*" -print -quit)/node_modules/better-sqlite3
-          rm -f "$pkg_dir/prebuilds/linux-x64.node"
-          (cd "$pkg_dir" && npx node-gyp rebuild --release)
-          test -f "$pkg_dir/build/Release/better_sqlite3.node"
-
       - name: Typecheck
         run: pnpm typecheck
 

@@ -33,17 +33,24 @@ export default defineConfig({
      * none on a slower one, which is the worst shape a test failure can take.
      *
      * Separating the runs removes the mixing rather than papering over it.
+     *
+     * store.sqlite.test.mts (the only file loading the better-sqlite3 native
+     * addon) is excluded too. In CI it has crashed its Vitest worker under
+     * the default `forks` pool ("Worker exited unexpectedly" —
+     * vitest-dev/vitest#8968 et al.), under `threads` (an actual SIGSEGV),
+     * and even with a from-source rebuild of the addon ruling out a prebuild
+     * ABI mismatch — three different causes tried and ruled out, and it has
+     * never failed locally. Whatever's wrong is specific to how Vitest 4
+     * manages worker processes around this native module on that runner.
+     * Run it manually with `pnpm test:kb-native`; move it back once
+     * upstream stabilizes.
      */
-    exclude: ['**/node_modules/**', '**/dist/**', 'src/**/*.smoke.test.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      'src/**/*.smoke.test.ts',
+      'scripts/kb/store.sqlite.test.mts',
+    ],
     css: false,
-    /*
-     * CI has twice failed running scripts/kb/store.sqlite.test.mts (the only
-     * file loading the better-sqlite3 native addon) under the default `forks`
-     * pool ("Worker exited unexpectedly" — vitest-dev/vitest#8968 et al.), and
-     * once under `threads` (an actual SIGSEGV, worse). Back on `forks` — the
-     * safer default for native modules — while CI is set up to build
-     * better-sqlite3 from source instead of using its bundled prebuild, to test
-     * whether the prebuilt .node binary is the actual culprit (see ci.yml).
-     */
   },
 });
