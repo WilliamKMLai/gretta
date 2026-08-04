@@ -158,12 +158,21 @@ describe('SettingsPanel', () => {
     expect(useSettingsStore.getState().kbEnabled).toBe(false);
   });
 
-  it('hides the embedding model until the knowledge base is on', () => {
-    // A model picker is meaningless to someone who has not enabled the feature
-    // it serves, and showing every control at once is how this panel grew long
-    // enough to need reorganising.
+  it('hides the embedding model until the knowledge base or literature search is on', () => {
+    // A model picker is meaningless to someone who has not enabled a feature
+    // that serves, and showing every control at once is how this panel grew
+    // long enough to need reorganising.
     renderPanel();
     expect(screen.queryByRole('combobox', { name: /embedding model/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the embedding model when literature search is on, even with the knowledge base off', () => {
+    // Literature ranking (ADR-029) uses this same model. Gating the picker on
+    // `kbEnabled` alone left someone who only wants literature search with no
+    // way to see or fix it — just an opaque runtime error at search time.
+    useSettingsStore.setState({ litEnabled: true });
+    renderPanel();
+    expect(screen.getByRole('combobox', { name: /embedding model/i })).toBeInTheDocument();
   });
 
   it('offers the installed models as the embedding-model choice', async () => {

@@ -17,6 +17,12 @@
  * twenty lines of arithmetic is the cheaper of the two costs. The duplication
  * is deliberate and tested on both sides — it is not drift.
  *
+ * `applyImpactBoost` is a deliberate, later exception to "nothing but the
+ * claim drives ranking": ADR-029's amendment lets citation impact nudge the
+ * final order, as a distinct post-relevance step — never inside
+ * `embeddableText` or the embedding itself, which stays exactly what this
+ * module originally specified.
+ *
  * Pure: imports nothing but its own types, tested directly.
  */
 
@@ -196,4 +202,32 @@ export function rankByOverlap<T>(
       relevance: lexicalOverlap(passage, candidate.text),
     }))
     .sort((left, right) => right.relevance - left.relevance);
+}
+
+/**
+ * Nudges a relevance-ranked list toward higher-impact candidates, without
+ * letting impact override relevance for a genuinely poor match (DECISIONS.md
+ * ADR-029's amendment on ranking by citation impact). This runs *after*
+ * relevance ranking, as a distinct step — it never enters `embeddableText` or
+ * the embedding itself, which stays exactly what ADR-029 originally specified:
+ * the claim, nothing else.
+ *
+ * `impact` must return 0..1; a candidate never checked against the impact
+ * source should map to 0 (neutral — not penalised, since absence of a check
+ * is not evidence of low impact) rather than the caller special-casing it.
+ * `weight` bounds how much a maximally-impactful candidate can move: at
+ * weight 0.15, no re-sort can close more than a 0.15 relevance gap on impact
+ * alone, so a highly relevant but uncited paper still beats a barely
+ * relevant, highly-cited one — impact breaks close calls, it does not
+ * override them.
+ */
+export function applyImpactBoost<T extends { relevance: number | null }>(
+  ranked: readonly T[],
+  impact: (entry: T) => number,
+  weight: number,
+): T[] {
+  return ranked
+    .map((entry) => ({ entry, score: (entry.relevance ?? 0) + impact(entry) * weight }))
+    .sort((left, right) => right.score - left.score)
+    .map(({ entry }) => entry);
 }

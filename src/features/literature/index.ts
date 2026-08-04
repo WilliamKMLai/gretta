@@ -7,8 +7,13 @@
  * generation path.
  */
 export { LiteraturePanel } from './LiteraturePanel';
+export { LiteratureAdvancedParams } from './LiteratureAdvancedParams';
+export { LiteratureHistoryList } from './LiteratureHistoryList';
 export { LiteratureResultList } from './LiteratureResultList';
+export { ResultCard } from './LiteratureResultCard';
 export { useLiteratureStore } from './literature.store';
 export type { LiteraturePhase, RankingMode } from './literature.store';
 export { useLiteratureSearch } from './useLiteratureSearch';
 export { DRAFT_QUERY_SYSTEM, buildDraftPrompt, extractDraftedQuery } from './draftQuery';
+export { clearCache, listEntries } from './cache';
+export type { CacheEntry } from './cache';

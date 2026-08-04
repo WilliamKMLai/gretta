@@ -26,6 +26,12 @@ export function KnowledgeBaseSection({ form, setAndCommit }: UseSettingsFormResu
   const installed = models.data ?? [];
   const embeddingModel = watch('defaultEmbeddingModel');
   const kbEnabled = watch('kbEnabled');
+  // Literature ranking (ADR-029) uses this same model, so someone who only
+  // wants literature search — knowledge base left off — still needs to see
+  // and fix it. Gating on `kbEnabled` alone left them with no picker, no
+  // "not installed" warning, and only an opaque runtime error at search time.
+  const litEnabled = watch('litEnabled');
+  const showEmbeddingModel = kbEnabled || litEnabled;
   const missingEmbedSelection =
     embeddingModel !== '' &&
     !models.isLoading &&
@@ -48,13 +54,14 @@ export function KnowledgeBaseSection({ form, setAndCommit }: UseSettingsFormResu
       </Field>
 
       {/*
-       * Detail stays hidden until the feature is on, matching literature
-       * search. An embedding model picker is meaningless — and faintly
-       * alarming — to someone who has not switched the knowledge base on, and
-       * a settings panel that shows every control at once is how this one got
-       * long enough to need reorganising in the first place.
+       * The knowledge-base-specific controls below this point still hide
+       * until that feature is on — a settings panel that shows every control
+       * at once is how this one got long enough to need reorganising in the
+       * first place. The embedding model is the one exception: it's shown
+       * whenever knowledge base OR literature search is on, since both
+       * depend on it.
        */}
-      {!kbEnabled ? null : (
+      {!showEmbeddingModel ? null : (
         <>
           <Field
             label="Embedding model"

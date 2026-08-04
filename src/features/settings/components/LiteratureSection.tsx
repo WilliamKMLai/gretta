@@ -18,6 +18,7 @@ import type { ReactElement } from 'react';
 import {
   Subtitle2,
   Caption1,
+  Button,
   Field,
   Input,
   MessageBar,
@@ -28,6 +29,8 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { useModels } from '../../../hooks/useOllamaQueries';
+import { useAppToasts } from '../../../components/toaster';
+import { clearCache, useLiteratureStore } from '../../literature';
 import type { UseSettingsFormResult } from '../useSettingsForm';
 
 const useStyles = makeStyles({
@@ -84,6 +87,17 @@ export function LiteratureSection({ form, setAndCommit }: UseSettingsFormResult)
   const sources = watch('litSources');
   const models = useModels();
   const installed = (models.data ?? []).map((model) => model.name);
+  const toasts = useAppToasts();
+
+  const onClearCache = (): void => {
+    void clearCache().then(() => {
+      // The store isn't persisted, but leaving the last query and results on
+      // screen after the user asked to clear their search history would say
+      // one thing and do another.
+      useLiteratureStore.getState().reset();
+      toasts.success('Literature cache and search history cleared.');
+    });
+  };
 
   return (
     <div className={styles.section}>
@@ -179,7 +193,7 @@ export function LiteratureSection({ form, setAndCommit }: UseSettingsFormResult)
 
           <Field
             label="Query drafting model (optional)"
-            hint="A normal text model, not an embedding model — it writes keywords from your selected passage, on your machine. Leave as “Same as the general model” unless you want a smaller, faster one for this. Ranking uses the separate embedding model set under Connection."
+            hint="A normal text model, not an embedding model — it writes keywords from your selected passage, on your machine. Leave as “Same as the general model” unless you want a smaller, faster one for this. Ranking uses the separate embedding model set under Knowledge base."
           >
             <Select
               value={watch('litDraftModel')}
@@ -196,9 +210,12 @@ export function LiteratureSection({ form, setAndCommit }: UseSettingsFormResult)
             </Select>
           </Field>
 
-          <Caption1 className={styles.note}>
-            Search results are not cached yet — every search is a fresh request.
-          </Caption1>
+          <Field
+            label="Literature cache"
+            hint="Search results are cached on this device for 24 hours, keyed by the query and sources you searched — up to 20 searches. It is a record of what you searched for, so it's treated as sensitive and only you can clear it."
+          >
+            <Button onClick={onClearCache}>Clear literature cache and search history</Button>
+          </Field>
 
           <Caption1 className={styles.note}>
             Full text is never fetched from behind a paywall. Papers you cannot read are listed with

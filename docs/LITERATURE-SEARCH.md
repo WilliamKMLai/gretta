@@ -88,12 +88,16 @@ yet built (see `ROADMAP.md`).
      (OpenAlex) and client-side otherwise (PubMed, Crossref). Blank means no date bound.
      Undated records are always kept.
    - **Results per source** — how many candidates to fetch before ranking trims the list
-     (5–100, default 50). This is the pool ranking works within; it can't surface anything
+     (5–100, default 20). This is the pool ranking works within; it can't surface anything
      past it, so a wider pool finds more at the cost of a slower search and more embedding
      work.
    - **Venue citation threshold** — a journal that charges to publish, is absent from DOAJ,
      and is cited less often than this draws a caution badge (0–50, default 0.2). The default
      is provisional, so tune it rather than trust it.
+   - **Citation impact weight** — how much a result's citation impact for its publication
+     year (OpenAlex) can nudge it up the ranking, on top of relevance to your selection
+     (0–1, default 0.25). It only breaks close calls between similarly relevant results; set
+     it to 0 for pure relevance ranking.
 6. Click **Search.** This is the only step that reaches the network, and only for the sources
    you've enabled.
 

@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  applyImpactBoost,
   cosineSimilarity,
   embeddableText,
   lexicalOverlap,
@@ -136,6 +137,61 @@ describe('lexicalOverlap', () => {
   it('returns 0 for empty input on either side', () => {
     expect(lexicalOverlap('', 'anything')).toBe(0);
     expect(lexicalOverlap('anything', '')).toBe(0);
+  });
+});
+
+describe('applyImpactBoost', () => {
+  interface Item {
+    id: string;
+    relevance: number | null;
+    impact: number;
+  }
+
+  const byImpactField = (entry: Item): number => entry.impact;
+
+  it('lets high impact win a close relevance call', () => {
+    const ranked = applyImpactBoost<Item>(
+      [
+        { id: 'a', relevance: 0.5, impact: 0 },
+        { id: 'b', relevance: 0.45, impact: 1 },
+      ],
+      byImpactField,
+      0.2,
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['b', 'a']);
+  });
+
+  it('does not let maximum impact override a large relevance gap', () => {
+    const ranked = applyImpactBoost<Item>(
+      [
+        { id: 'relevant', relevance: 0.9, impact: 0 },
+        { id: 'cited', relevance: 0.3, impact: 1 },
+      ],
+      byImpactField,
+      0.2,
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['relevant', 'cited']);
+  });
+
+  it('treats zero impact as neutral, not a penalty, among equally relevant candidates', () => {
+    const ranked = applyImpactBoost<Item>(
+      [
+        { id: 'first', relevance: 0.5, impact: 0 },
+        { id: 'second', relevance: 0.5, impact: 0 },
+      ],
+      byImpactField,
+      0.2,
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['first', 'second']);
+  });
+
+  it('does not mutate the input array', () => {
+    const items: Item[] = [
+      { id: 'a', relevance: 0.1, impact: 0 },
+      { id: 'b', relevance: 0.9, impact: 0 },
+    ];
+    applyImpactBoost<Item>(items, byImpactField, 0.2);
+    expect(items.map((entry) => entry.id)).toEqual(['a', 'b']);
   });
 });
 

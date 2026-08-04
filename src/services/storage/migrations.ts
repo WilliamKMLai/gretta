@@ -53,6 +53,19 @@ export function settingsV2ToV3(data: unknown): unknown {
   return { ...rest, defaultEmbeddingModel: kbDefaultEmbeddingModel };
 }
 
+/**
+ * v3 → v4 settings: adds `litCitationImpactWeight`, exposing what was a
+ * hardcoded constant in the citation-impact ranking nudge (ADR-029's
+ * amendment). A v3 payload predates the field entirely, so there is no
+ * "user's value" to preserve here — every v3 install gets the same default a
+ * fresh install would.
+ */
+export function settingsV3ToV4(data: unknown): unknown {
+  if (!isRecord(data)) return data;
+  if (typeof data.litCitationImpactWeight === 'number') return data;
+  return { ...data, litCitationImpactWeight: 0.25 };
+}
+
 /** Shape of a v1 `gretta/history` payload, as far as we rely on it. */
 interface LegacyMessage {
   id?: unknown;

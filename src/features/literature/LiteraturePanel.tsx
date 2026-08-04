@@ -13,15 +13,10 @@
 import { useCallback } from 'react';
 import type { ReactElement } from 'react';
 import {
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
   Body1,
   Button,
   Caption1,
   Field,
-  Input,
   MessageBar,
   MessageBarBody,
   Spinner,
@@ -36,6 +31,8 @@ import { EmptyState } from '../../components/EmptyState';
 import { useSettingsStore } from '../settings';
 import { useLiteratureStore } from './literature.store';
 import { useLiteratureSearch } from './useLiteratureSearch';
+import { LiteratureAdvancedParams } from './LiteratureAdvancedParams';
+import { LiteratureHistoryList } from './LiteratureHistoryList';
 import { LiteratureResultList } from './LiteratureResultList';
 
 const useStyles = makeStyles({
@@ -98,12 +95,6 @@ const useStyles = makeStyles({
     overflowY: 'auto',
     whiteSpace: 'pre-wrap',
   },
-  advanced: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalM,
-    paddingTop: tokens.spacingVerticalS,
-  },
   status: {
     display: 'flex',
     alignItems: 'center',
@@ -114,17 +105,18 @@ const useStyles = makeStyles({
 
 export function LiteraturePanel(): ReactElement {
   const styles = useStyles();
-  const { phase, passage, draft, error, results, fromYear, setDraft, setFromYear } =
-    useLiteratureStore();
+  const { phase, passage, draft, error, results, setDraft } = useLiteratureStore();
   const { captureAndDraft, search, busy } = useLiteratureSearch();
   const litEnabled = useSettingsStore((state) => state.litEnabled);
   const sources = useSettingsStore((state) => state.litSources);
-  const resultsPerSource = useSettingsStore((state) => state.litResultsPerSource);
-  const minVenueCitedness = useSettingsStore((state) => state.litMinVenueCitedness);
+  const litVerification = useSettingsStore((state) => state.litVerification);
   const setSettings = useSettingsStore((state) => state.setSettings);
 
   const anySource = Object.values(sources).some(Boolean);
   const tooLong = draft.length > MAX_QUERY_CHARS;
+  const searchingStatus = litVerification
+    ? 'Searching, checking retractions, and ranking against your selection…'
+    : 'Searching and ranking against your selection…';
 
   const onDraftChange = useCallback(
     (_event: unknown, data: { value: string }) => {
@@ -161,6 +153,7 @@ export function LiteraturePanel(): ReactElement {
         Literature search reaches third-party scholarly APIs. It sends only a search query you have
         seen and approved — never your document, your excerpts, or your prompts.
       </Caption1>
+      <LiteratureHistoryList />
 
       {!anySource ? (
         <MessageBar className={styles.fixed} intent="warning" layout="multiline">
@@ -206,61 +199,7 @@ export function LiteraturePanel(): ReactElement {
         <Textarea value={draft} onChange={onDraftChange} resize="vertical" rows={2} />
       </Field>
 
-      <Accordion className={styles.fixed} collapsible>
-        <AccordionItem value="advanced">
-          <AccordionHeader size="small">Advanced search parameters</AccordionHeader>
-          <AccordionPanel>
-            <div className={styles.advanced}>
-              <Field
-                label="Published since"
-                hint="A filter you set, not a weight GRETTA applies. Blank means no date bound."
-              >
-                <Input
-                  type="number"
-                  value={fromYear === null ? '' : String(fromYear)}
-                  placeholder="e.g. 2022"
-                  onChange={(_, data) => {
-                    const parsed = Number.parseInt(data.value, 10);
-                    setFromYear(Number.isFinite(parsed) ? parsed : null);
-                  }}
-                />
-              </Field>
-              <Field
-                label="Results per source"
-                hint="Candidates fetched before ranking trims them. Ranking is precision over this pool and cannot reach past it, so a wider pool finds more — at the cost of a slower search and more embedding work."
-              >
-                <Input
-                  type="number"
-                  value={String(resultsPerSource)}
-                  onChange={(_, data) => {
-                    const parsed = Number.parseInt(data.value, 10);
-                    if (Number.isFinite(parsed)) {
-                      setSettings({ litResultsPerSource: Math.min(100, Math.max(5, parsed)) });
-                    }
-                  }}
-                />
-              </Field>
-
-              <Field
-                label="Venue citation threshold"
-                hint="A journal that charges to publish, is absent from DOAJ, and is cited less often than this draws a caution. The default is provisional — it was chosen without real result sets behind it, so tune it rather than trust it."
-              >
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={String(minVenueCitedness)}
-                  onChange={(_, data) => {
-                    const parsed = Number.parseFloat(data.value);
-                    if (Number.isFinite(parsed)) {
-                      setSettings({ litMinVenueCitedness: Math.min(50, Math.max(0, parsed)) });
-                    }
-                  }}
-                />
-              </Field>
-            </div>
-          </AccordionPanel>
-        </AccordionItem>
-      </Accordion>
+      <LiteratureAdvancedParams />
 
       <div className={mergeClasses(styles.actions, styles.fixed)}>
         <Button
@@ -286,9 +225,7 @@ export function LiteraturePanel(): ReactElement {
         {phase === 'searching' ? (
           <div className={styles.status}>
             <Spinner size="tiny" />
-            <Caption1>
-              Searching, checking retractions, and ranking against your selection…
-            </Caption1>
+            <Caption1>{searchingStatus}</Caption1>
           </div>
         ) : phase === 'done' && results.length === 0 ? (
           <Body1>No results. Try broader keywords, or turn on another source.</Body1>

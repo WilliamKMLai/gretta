@@ -259,6 +259,14 @@ export interface AppSettings extends GenerationOptions {
    * again.
    */
   litMinVenueCitedness: number;
+  /**
+   * How much a candidate's age-adjusted citation impact (OpenAlex
+   * `citedByPercentileYear`, when available) can nudge relevance ranking
+   * (ADR-029's amendment). 0 disables the nudge entirely — pure relevance, as
+   * before that amendment. Provisional and exposed for the same reason as
+   * `litMinVenueCitedness`: chosen without real result sets behind it.
+   */
+  litCitationImpactWeight: number;
 }
 
 /**

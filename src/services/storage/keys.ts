@@ -17,6 +17,8 @@ export const STORAGE_KEYS = {
   prompts: 'gretta/prompts',
   /** Derived prompt-size measurements per model (ADR-025). */
   calibration: 'gretta/calibration',
+  /** Cached literature search results, keyed by query+sources (ADR-028). */
+  literatureCache: 'gretta/literature-cache',
 } as const satisfies Record<string, StorageKey>;
 
 /** Current envelope version per key — `{ version, data }` on disk. */
@@ -25,9 +27,11 @@ export const STORAGE_VERSIONS: Record<StorageKey, number> = {
   // embedding model (ADR-022) — only where the user never changed them.
   // v3: kbDefaultEmbeddingModel → defaultEmbeddingModel, since ADR-030 makes it
   // serve literature re-ranking as well as the knowledge base.
-  'gretta/settings': 3,
+  // v4: add litCitationImpactWeight (ADR-029's citation-impact-ranking amendment).
+  'gretta/settings': 4,
   // v2: conversation threads → flat generation records (ADR-021).
   'gretta/history': 2,
   'gretta/prompts': 1,
   'gretta/calibration': 1,
+  'gretta/literature-cache': 1,
 };

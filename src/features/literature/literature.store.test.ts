@@ -61,4 +61,22 @@ describe('useLiteratureStore', () => {
     expect(useLiteratureStore.getState().passage).toBe('');
     expect(useLiteratureStore.getState().draft).toBe('');
   });
+
+  it('reset also clears results, so clearing the literature cache empties the panel', () => {
+    // ADR-028's clear control deletes the on-disk cache and calls reset() so
+    // the last query's results don't linger on screen after the user asked to
+    // clear their search history — a stale results list would say one thing
+    // and show another.
+    useLiteratureStore
+      .getState()
+      .setResults([], 'semantic', 2, 'fell back to lexical', [{ source: 'PubMed', query: 'q' }]);
+    useLiteratureStore.getState().reset();
+    const state = useLiteratureStore.getState();
+    expect(state.results).toEqual([]);
+    expect(state.ranking).toBe('source-order');
+    expect(state.hiddenCount).toBe(0);
+    expect(state.rankingNote).toBeNull();
+    expect(state.sentQueries).toEqual([]);
+    expect(state.phase).toBe('idle');
+  });
 });

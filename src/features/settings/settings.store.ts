@@ -52,8 +52,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   litDraftModel: null,
   litContactEmail: '',
   litOpenAlexKey: '',
-  litResultsPerSource: 50,
+  // Ranking is precision over this pool and cannot reach past it, so a wider
+  // pool finds more — at the cost of a slower search and more embedding work
+  // per source. 20 is a lighter-weight starting point than the original 50;
+  // raise it per search from the Advanced panel when a topic needs a wider net.
+  litResultsPerSource: 20,
   litMinVenueCitedness: 0.2,
+  litCitationImpactWeight: 0.25,
 };
 
 /** Persistence-boundary validation; UI-level range validation is Phase 9. */
@@ -86,6 +91,7 @@ export const appSettingsSchema = z.object({
   litOpenAlexKey: z.string(),
   litResultsPerSource: z.number(),
   litMinVenueCitedness: z.number(),
+  litCitationImpactWeight: z.number(),
 }) satisfies ZodType<AppSettings>;
 
 export interface SettingsState extends AppSettings {
@@ -118,6 +124,7 @@ const pickSettings = (state: SettingsState): AppSettings => ({
   litOpenAlexKey: state.litOpenAlexKey,
   litResultsPerSource: state.litResultsPerSource,
   litMinVenueCitedness: state.litMinVenueCitedness,
+  litCitationImpactWeight: state.litCitationImpactWeight,
 });
 
 export const useSettingsStore = create<SettingsState>()(

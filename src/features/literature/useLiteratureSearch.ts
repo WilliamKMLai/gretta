@@ -22,52 +22,30 @@ import {
   createOpenAlexClient,
   createPubMedClient,
   describeCredibility,
-  embeddableText,
-  rankByOverlap,
   queryText,
-  rankByRelevance,
-  verificationStatus,
 } from '../../services/literature';
-import type { AssessedRecord, CredibilitySignals, LiteratureRecord } from '../../types/literature';
+import type { AssessedRecord, LiteratureRecord } from '../../types/literature';
 import { useSettingsStore } from '../settings';
-import { useLiteratureStore, type RankingMode, type SourceQuery } from './literature.store';
+import { useLiteratureStore, type SourceQuery } from './literature.store';
 import { DRAFT_QUERY_SYSTEM, buildDraftPrompt, extractDraftedQuery } from './draftQuery';
-
-function emptySignals(): CredibilitySignals {
-  return { openAlex: null, pubmed: null, crossref: null };
-}
-
-/** Deduplicates across sources by DOI, preferring the record with an abstract. */
-function mergeRecords(groups: readonly LiteratureRecord[][]): LiteratureRecord[] {
-  const byKey = new Map<string, LiteratureRecord>();
-  for (const group of groups) {
-    for (const record of group) {
-      const key = record.doi?.toLowerCase() ?? record.id;
-      const existing = byKey.get(key);
-      if (existing === undefined) {
-        byKey.set(key, record);
-        continue;
-      }
-      // PubMed carries abstracts far more often than Crossref; when both have
-      // the same paper, keep whichever actually has text to embed.
-      if (existing.abstract === null && record.abstract !== null) {
-        byKey.set(key, { ...record, doi: record.doi ?? existing.doi });
-      }
-    }
-  }
-  return [...byKey.values()];
-}
+import { cacheKey, enabledSourceKeys, hashPassage, writeCache } from './cache';
+import type { CacheEntry } from './cache';
+import { deliverRanked, emptySignals, mergeRecords, resolveCacheHit } from './searchPipeline';
 
 export interface UseLiteratureSearch {
   captureAndDraft: () => Promise<void>;
+  /** Always a fresh search, never served from cache — see `reuseSearch`. */
   search: () => Promise<void>;
+  /** Restores a "recent searches" entry; the one place a cache hit — instant
+   * if the passage still matches, a real re-rank if it doesn't — is wanted. */
+  reuseSearch: (entry: CacheEntry) => Promise<void>;
   busy: boolean;
 }
 
 export function useLiteratureSearch(): UseLiteratureSearch {
   const settings = useSettingsStore();
   const store = useLiteratureStore();
-  const { setPassage, setDraft, setPhase, setError, setResults } = store;
+  const { setPassage, setDraft, setFromYear, setPhase, setError, setResults } = store;
 
   /** Steps 1 and 2. Nothing here touches the network. */
   const captureAndDraft = useCallback(async (): Promise<void> => {
@@ -151,6 +129,9 @@ export function useLiteratureSearch(): UseLiteratureSearch {
      */
     const perSource = settings.litResultsPerSource;
     const controller = new AbortController();
+
+    const enabledSources = enabledSourceKeys(settings.litSources);
+    const cacheEntryKey = cacheKey(queryText(approval.query), enabledSources, fromYear, perSource);
 
     try {
       const groups: LiteratureRecord[][] = [];
@@ -270,83 +251,58 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         };
       });
 
-      const { ordered, ranking, note } = await rank(
+      const { ordered, ranking, note, hidden } = await deliverRanked(
         assessed,
+        sent,
         passage,
         ollama,
         settings,
         controller,
+        setResults,
       );
-      const hidden = ordered.filter(
-        (entry) => verificationStatus(entry.signals) === 'limited',
-      ).length;
-
-      setResults(ordered, ranking, hidden, note, sent);
+      // Best-effort: a full localStorage must not fail a search that already
+      // succeeded and is already on screen.
+      await writeCache(cacheEntryKey, {
+        results: ordered,
+        ranking,
+        hiddenCount: hidden,
+        rankingNote: note,
+        sentQueries: sent,
+        query: queryText(approval.query),
+        sources: enabledSources,
+        fromYear,
+        resultsPerSource: perSource,
+        passageHash: hashPassage(passage),
+      }).catch(() => undefined);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'The search could not be completed.');
     }
   }, [settings, setPhase, setError, setResults]);
 
+  const reuseSearch = useCallback(
+    async (entry: CacheEntry): Promise<void> => {
+      const { ollama } = getServices();
+      setDraft(entry.query);
+      setFromYear(entry.fromYear);
+      setPhase('searching');
+      setError(null);
+
+      const controller = new AbortController();
+      try {
+        const { passage } = useLiteratureStore.getState();
+        await resolveCacheHit(entry.key, entry, passage, ollama, settings, controller, setResults);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'The search could not be completed.');
+      }
+    },
+    [settings, setDraft, setFromYear, setPhase, setError, setResults],
+  );
+
   return {
     captureAndDraft,
     search,
+    reuseSearch,
     busy: store.phase === 'drafting' || store.phase === 'searching',
-  };
-}
-
-/**
- * Ranks by embeddings when they are available, by lexical overlap when they are
- * not, and reports *why* it fell back.
- *
- * The reason used to be swallowed by a bare `catch`, so a user whose embedding
- * model was simply set to something they had not pulled was told "no embedding
- * model available" — true in effect, useless as a diagnosis, and easy to read
- * as a bug in the feature rather than a setting to change. The failure is
- * expected and survivable; being vague about it is not.
- */
-async function rank(
-  assessed: readonly AssessedRecord[],
-  passage: string,
-  ollama: ReturnType<typeof getServices>['ollama'],
-  settings: { defaultEmbeddingModel: string },
-  controller: AbortController,
-): Promise<{ ordered: AssessedRecord[]; ranking: RankingMode; note: string | null }> {
-  const texts = assessed.map((entry) => embeddableText(entry.record));
-  const model = settings.defaultEmbeddingModel;
-  let note: string;
-
-  try {
-    const vectors = await ollama.embed(model, [passage, ...texts], controller.signal);
-    const [passageVector, ...candidateVectors] = vectors;
-
-    if (passageVector !== undefined && candidateVectors.length === assessed.length) {
-      const ranked = rankByRelevance(
-        passageVector,
-        assessed.map((entry, index) => ({
-          payload: entry,
-          embedding: candidateVectors[index] ?? [],
-        })),
-      );
-      return {
-        ordered: ranked.map((entry) => ({ ...entry.payload, relevance: entry.relevance })),
-        ranking: 'semantic',
-        note: null,
-      };
-    }
-    note = `${model} returned an unexpected number of vectors.`;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    note = `Could not embed with ${model} — ${detail} Check the embedding model under Settings → Connection; it must be an embedding model you have pulled.`;
-  }
-
-  const ranked = rankByOverlap(
-    passage,
-    assessed.map((entry, index) => ({ payload: entry, text: texts[index] ?? '' })),
-  );
-  return {
-    ordered: ranked.map((entry) => ({ ...entry.payload, relevance: entry.relevance })),
-    ranking: 'lexical',
-    note,
   };
 }
 

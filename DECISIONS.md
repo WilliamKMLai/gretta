@@ -1490,6 +1490,116 @@ first line of code.
 3. _Whether the query-drafting model should be user-selectable_ or should reuse `defaultModel`. A
    poor drafter produces poor searches, but a second model setting is a second thing to explain.
 
+**Amended on implementation (the literature cache).** "Caching and its own privacy surface"
+above is now built, in `src/features/literature/cache.ts`, as a new `gretta/literature-cache`
+slot in the existing `StorageService` (ADR-006's versioned envelopes) rather than a TanStack
+Query cache — an in-memory cache would not survive the pane reloading, which happens
+constantly in a Word task pane, and would give the required "Clear literature cache and
+search history" control nothing durable to delete.
+
+The bound is **20 entries**, evicted oldest-first, on top of the 24-hour TTL the ADR already
+specified. Chosen because a cached entry carries full abstracts for up to
+`litResultsPerSource` records — the single largest persisted payload in the app after
+history — against a `localStorage` budget (~5 MB) shared with settings, history, and
+prompts; 20 is generous for one writing session's worth of distinct query/source/filter
+combinations without risking that budget.
+
+What is cached is the _retrieved, enriched_ records — including the OpenAlex/PubMed/Crossref
+signals and the retraction check, since fetching those is exactly the network cost the cache
+exists to avoid — never the ranking. Re-ranking is a local, passage-dependent step (ADR-029),
+and the passage can differ between two searches that share a query, sources, and filters, so a
+cache hit re-embeds against the _current_ passage rather than replaying an ordering computed
+for a possibly different one; only the cache miss path does new network I/O. The cache key
+folds in the normalized query text, the enabled source set (order-independent), `fromYear`,
+and `litResultsPerSource` — any change to one of those is a miss, by construction, since a
+different value means a different request would have been sent.
+
+The clear control lives in `LiteratureSection.tsx` and does two things, both required by the
+ADR: `clearCache()` removes the storage key outright (not a tombstone), and
+`useLiteratureStore.getState().reset()` clears the in-memory passage, draft, and results — the
+store isn't persisted, but leaving the last query on screen after the user asked to clear their
+search history would say one thing and show another. This is the one place `features/settings`
+imports `features/literature`, alongside the pre-existing reverse edge (`useLiteratureSearch`
+already reads `useSettingsStore`), so the two features now import each other — the same
+structural shape ADR-017 cut for `settings`/`ai` by moving shared logic into `hooks/`. That
+fix doesn't transfer here: the thing being shared (`useLiteratureStore`, `clearCache`) is
+literature-owned state and storage access, and `hooks/` may not import `features` at all (only
+`services-root`, `services`, `types`, `utils`), so there is nowhere neutral to relocate it to
+without a disproportionate refactor for a one-button feature. `boundaries/element-types`
+permits feature-to-feature imports, so nothing is lint-broken, and the cycle is inert at
+runtime — both cross-imports are only read inside hook bodies and event handlers, never at
+module-evaluation time — verified by a clean `pnpm build` with no circular-import warning from
+Rollup. Left as a known wart rather than a blocker; worth a `hooks/`-style fix if this shape
+recurs a third time.
+
+**Amended on implementation (recent searches).** The cache doubled as a browsable "search
+history" from the start of this paragraph's own wording, but nothing exposed it — a
+completed search vanished from the pane the moment its results were replaced by the next
+one. `listEntries()` (`cache.ts`) lists cached searches newest-first, pruning expired ones on
+the way out same as a lookup by key, and `LiteratureHistoryList.tsx` renders them as a
+"Recent searches" list in the panel, open by default (it only renders once there is
+something to show, so a collapsed-by-default state — right for "Advanced search
+parameters" — would just be one more click for the common case here).
+
+Each cache entry now denormalizes `query`, `sources`, `fromYear`, and `resultsPerSource`
+alongside the existing fields, rather than the UI parsing them back out of `cacheKey`'s
+`JSON.stringify` output — that string is an implementation detail of the key, not a format
+worth depending on elsewhere.
+
+_Amended again on implementation._ Clicking a past search was first built to restore the
+query into the draft field without searching, reasoning that ADR-028's review gate requires a
+distinct, deliberate action before anything is sent. On reflection (and a direct request)
+that drew the gate in the wrong place: the row already displays the exact query text that
+would be sent, in full, before the click — the same information the draft field shows before
+a press of Search — and that query has already been sent once before, reviewed the same way.
+The gate's actual requirement is that a query never reaches the network before the user has
+seen it; a visible row the user clicks on is not that, so clicking one now restores the query
+and year filter and searches immediately. What the gate still forbids, unchanged: nothing
+searches on its own from a passage selection, a mount, or a re-render — only an explicit
+click, here or on the Search button, ever transmits anything.
+
+**Amended on implementation (a cache hit still re-embedded).** User-reported: repeating a
+search still took as long as the first one, because a hit only ever skipped the network —
+`rank()` re-embedded the passage and every candidate through Ollama on every hit, which for
+an uncached local model is comparable in wall-clock cost to the network round trips the cache
+was built to avoid. The re-embed was deliberate, not an oversight: two searches sharing a
+query, sources, and filters can still be ranked against different passages, and reusing a
+stale ordering would be silently wrong.
+
+The actual repeat case — press Search again with the same selection, or reload a query from
+"recent searches" without capturing a new one — has an identical passage too, and for that
+case there is nothing to recompute. Each cache entry now also stores `passageHash`
+(`hashPassage()`, an FNV-1a hash — non-cryptographic on purpose, since a collision only costs
+an unneeded re-rank rather than a wrong one). A hit whose current passage hashes the same
+skips `rank()` entirely and delivers the stored ordering as-is; a hit whose passage differs
+still re-ranks, exactly as before, and writes the fresh ordering back under the same key so
+the _next_ repeat is the fast path too. The passage itself is still never persisted — only its
+hash — consistent with keeping it out of every other piece of stored state.
+
+Also fixed in the same pass: the "Searching, checking retractions, and ranking against your
+selection…" status line named retraction checking unconditionally, even with that source
+(Crossref, gated on `litVerification`) off. It now reads "Searching and ranking…" when
+verification is off — a status line should describe what search is _doing_, not what the
+feature is capable of when everything is enabled.
+
+**Amended once more (Search itself no longer checks the cache).** The paragraph above says
+"press Search again with the same selection... has an identical passage too, and for that
+case there is nothing to recompute" — true of the mechanism, wrong about who gets to use it.
+User-reported: changing an Advanced parameter that doesn't participate in `cacheKey` (venue
+threshold, and ADR-029's citation-impact weight once that shipped) and pressing Search kept
+showing the old ranking, because the Search button itself did the cache lookup and a matching
+key plus a matching `passageHash` meant "nothing to recompute" even though something the user
+had just changed very much wanted recomputing.
+
+The fix draws the line the bug exposed as missing: `search()` (the Search button) now never
+reads the cache — it always re-fetches and re-ranks, full stop, and still writes the fresh
+result to cache afterward so the _next_ lookup benefits. The instant-reuse path
+(`resolveCacheHit`'s passage-hash check) survives only behind a second, separate function,
+`reuseSearch`, called from exactly one place: clicking an entry in "recent searches," where
+the user is deliberately asking to revisit a known past result rather than asking for a new
+one. A press of Search now means what it says regardless of what the cache holds; a click on
+a specific past search still means "show me that again, fast."
+
 ## ADR-029 — Rank relevance locally, show credibility, never score a paper
 
 **Status:** Accepted (Phase 15, 2026-07-25)
@@ -1675,6 +1785,87 @@ Cosine similarity now exists in two places by design. And GRETTA will sometimes 
 below a specialist one: that is intended, and it needs saying in `docs/` or it will be reported as a
 bug by someone who was promised the opposite.
 
+**Amended on implementation (not-checked badges, consolidated).** The hard rule above — silence must
+never look like an all-clear — was first built as a grey "not checked" badge on _every_ card for
+every unconsulted source. In practice this repeated identically down an entire result list whenever
+a source was off search-wide (OpenAlex, MEDLINE via PubMed, Crossref), which is exactly the
+per-result noise the retraction-disclosure banner (below) already solved for one check — "one
+banner, not one per result." User-reported: it wasn't clear the per-card badges carried any
+information at all.
+
+`LiteratureResultList.tsx`'s `describeSkippedChecks` now states the rule once per search rather than
+once per result: a single compact line naming every check that ran for _none_ of the current
+results ("Not checked: retraction/registration · MEDLINE · venue"), computed with `.every()` so a
+check skipped for only some results — a record missing a DOI while verification is otherwise on —
+still gets its per-record "not checked" badge on the card it actually applies to, unrolled from
+`describeCredibility`'s existing badge list. `describeCredibility` itself is unchanged: it still
+returns a `tone: 'unchecked'` badge for every group a record didn't get checked against, and remains
+independently tested. Only the _rendering_ choice changed — `ResultCard` filters `tone === 'unchecked'`
+badges out of the per-card row now that the summary line covers the common case — not the type-level
+guarantee: `CredibilitySignals`' groups are still nullable and nothing here would let "checked,
+nothing found" read as "not checked" or vice versa. The hard rule is about the distinction existing
+and being stated; it does not require the statement to repeat identically down the page.
+
+**Amended on implementation (citation impact now nudges ranking).** This ADR's title says "never
+score a paper," and until now that was true without qualification: relevance, credibility, and
+stance were computed independently and never combined into anything, displayed or otherwise.
+User-reported: searching a specific tool/method by name, the paper that introduced it — by far the
+most-cited result in the list — ranked 12th, because ranking is purely cosine similarity between
+the _passage_ and each candidate's title/abstract, and has nothing to do with the query text or with
+how well-established a paper is. A highly technical introducing paper can legitimately embed further
+from a passage's phrasing than a later paper that happens to restate the idea in words closer to the
+user's own — semantic similarity is real relevance, but it is not the only thing a researcher means
+by "this is the right result."
+
+The fix is narrower than "use citations": `applyImpactBoost` (`services/literature/rank.ts`) runs as
+an explicit, separate step _after_ relevance ranking (semantic or lexical), nudging the order by each
+candidate's OpenAlex `citedByPercentileYear` — the age-normalised measure this ADR already computes
+and displays specifically because a raw count rewards age by construction, the exact bias that was
+the original, and still valid, reason citations were excluded from ranking entirely. The nudge is
+capped by a weight — at weight _w_, a maximally-cited candidate can close at most a _w_-wide relevance
+gap, never overturn a clearly larger one, so a highly relevant but uncited paper still beats a barely
+relevant, highly-cited one. A candidate never checked against OpenAlex scores 0 impact — neutral, not
+penalised, consistent with this ADR's "not checked is not absent" rule elsewhere.
+
+_Amended again on implementation._ The weight started as a hardcoded, unmeasured constant
+(`CITATION_IMPACT_WEIGHT = 0.15`) in the same spirit as `NEGLIGIBLE_CITEDNESS` before it got a
+Settings control — and on the first real search that motivated this amendment, 0.15 was not enough to
+move the paper in question out of the teens. Rather than guess again, `litCitationImpactWeight`
+(default 0.25, range 0–1) is now a `SpinButton` in the Advanced search parameters panel next to
+`litMinVenueCitedness`, following exactly the path that field already took: expose an unmeasured
+number rather than keep re-guessing it in code. 0 turns the nudge off outright, recovering pure
+relevance ranking without a code change.
+
+What did _not_ change: `embeddableText` still excludes venue and journal name, so prestige cannot
+enter the embedding itself; `describeCredibility` still returns badges only, never a number, so
+nothing resembling a composite score is ever _shown_; and the three axes are still computed and
+displayed independently. What changed is narrower and real: the final sort order is now a function of
+two axes, not one, and that is a genuine, deliberate exception to "never score a paper" — scoped to
+ordering, invisible in the UI as a number, and recorded here rather than left to be discovered by
+someone reading the code after this paragraph was already stale.
+
+**Amended a third time (zero citations were still getting boosted).** User-reported and confirmed
+with a concrete case: a 2026 paper with zero citations was outranking a 2025 paper from the same
+journal carrying 58. Not a weight-tuning problem — a percentile artifact. `citedByPercentileYear` is
+computed within a same-year cohort, and early in a cohort year most other papers _also_ have zero
+citations yet; percentile-of-ties-at-the-minimum gets assigned the percentile of that entire tied
+mass, which can be large. A paper can therefore carry a high percentile while having demonstrated no
+citation impact whatsoever. `citationImpact()` (`searchPipeline.ts`) now requires `citedByCount` to be
+present and nonzero before consulting the percentile at all — zero citations is zero impact,
+unconditionally, regardless of what the percentile for that (mostly empty) cohort says. This is a
+tighter version of the same principle the weight already enforces: impact can break a close call, not
+manufacture one out of nothing.
+
+**Amended a fourth time (the same paper, three DOIs).** Also user-reported, same search: one preprint
+cross-listed on Open MIND and twice on Figshare — three deposits, three DOIs, three ranked positions —
+pushed the actual target paper to a fourth. `mergeRecords`'s DOI-only key could not see they were the
+same work, because each repository mirror is registered under its own DOI. It now dedupes a second
+time, by normalized title (lowercased, punctuation stripped), after the DOI pass — same preference
+rule, the record with an abstract wins. A blank title is never merged with another blank title, so two
+genuinely different DOI-less records don't collapse into one. This is unrelated to the citation-impact
+fixes above but was found by the same report and fixed in the same pass, so it is recorded here rather
+than invent a separate section for two lines of context.
+
 **Open questions.**
 
 1. _Does local semantic re-ranking actually beat PubMed's own relevance ranking?_ Assumed, not
@@ -1694,6 +1885,14 @@ bug by someone who was promised the opposite.
 5. _Expressions of concern are not comprehensively covered_ in the Retraction Watch data, by
    Crossref's own statement. An absent flag is therefore not an all-clear, and the UI must not imply
    that it is. The exact wording is unresolved.
+6. ~~`CITATION_IMPACT_WEIGHT` should become a Settings field.~~ **Resolved:**
+   `litCitationImpactWeight`, default 0.25. ~~The paper in question may simply lack a
+   `citedByPercentileYear`.~~ **Also resolved, and wrong**: it had one — the actual cause was the
+   zero-citations percentile artifact fixed above. Still open: whether relevance ranking itself is
+   the real gap for named-entity queries (searching a tool/method by name and expecting its
+   introducing paper near the top regardless of passage phrasing) — an exact-title-match signal was
+   the alternative this ADR chose not to build first, and the citation-impact route has now had two
+   rounds of fixes without a confirmed re-check against the motivating search.
 
 ## ADR-030 — The pane embeds for itself; the companion keeps its own
 

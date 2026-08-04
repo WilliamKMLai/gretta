@@ -4,7 +4,12 @@
  * and never invent one.
  */
 import { describe, expect, it } from 'vitest';
-import { conversationsV1ToHistoryV2, settingsV1ToV2, settingsV2ToV3 } from './migrations';
+import {
+  conversationsV1ToHistoryV2,
+  settingsV1ToV2,
+  settingsV2ToV3,
+  settingsV3ToV4,
+} from './migrations';
 
 interface HistoryShape {
   records: {
@@ -234,5 +239,25 @@ describe('settingsV2ToV3', () => {
 
   it('passes through anything that is not an object', () => {
     expect(settingsV2ToV3('nonsense')).toBe('nonsense');
+  });
+});
+
+describe('settingsV3ToV4', () => {
+  it('inserts the default citation-impact weight for a v3 payload', () => {
+    expect(settingsV3ToV4({ ollamaUrl: 'http://x' })).toEqual({
+      ollamaUrl: 'http://x',
+      litCitationImpactWeight: 0.25,
+    });
+  });
+
+  it('leaves a value already present untouched, even if the user set it to 0', () => {
+    expect(settingsV3ToV4({ litCitationImpactWeight: 0 })).toEqual({
+      litCitationImpactWeight: 0,
+    });
+  });
+
+  it('passes through anything that is not an object', () => {
+    expect(settingsV3ToV4('nonsense')).toBe('nonsense');
+    expect(settingsV3ToV4(null)).toBeNull();
   });
 });

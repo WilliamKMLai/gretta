@@ -1,18 +1,14 @@
 /**
- * Literature results (DECISIONS.md ADR-029).
+ * Literature results list (DECISIONS.md ADR-029). Per-result rendering lives
+ * in `LiteratureResultCard.tsx`; this file is the list shell — grouping,
+ * the "what was sent" disclosure, and the summary lines that apply to the
+ * whole search rather than one result.
  *
- * Three rules from that ADR are visible in this file rather than merely
- * honoured by it.
- *
- * - **Retraction warnings are exempt from everything.** They render above the
- *   title, on every result, including ones inside the collapsed
- *   limited-verification group. A warning you can miss by not expanding
- *   something is not a warning.
- * - **Signals are shown, never summed.** Badges carry their own tooltip saying
- *   what the check was and where it came from. There is no score anywhere.
- * - **"Not checked" is not "absent".** Unchecked badges are styled distinctly
- *   and say so in words, because a silently degraded trust indicator is worse
- *   than none.
+ * **"Not checked" is not "absent".** Stated once per search, not once per
+ * card: which sources went unconsulted is a property of what's turned on,
+ * the same for every result, so repeating a grey "not checked" badge on
+ * every card is exactly the noise the retraction-disclosure banner already
+ * solved for one check — the same fix now covers all of them in one place.
  *
  * Low-verification results are collapsed rather than hidden: indexing coverage
  * is skewed toward English-language publishing, so a missing signal is often a
@@ -21,33 +17,22 @@
 import { useState } from 'react';
 import type { ReactElement } from 'react';
 import {
-  Badge,
   Body1,
   Button,
   Caption1,
-  Link,
   MessageBar,
   MessageBarBody,
-  Subtitle2,
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
-import { assessUpdates, describeCredibility, verificationStatus } from '../../services/literature';
+import { verificationStatus } from '../../services/literature';
 import type { AssessedRecord } from '../../types/literature';
 import { useSettingsStore } from '../settings';
 import { useLiteratureStore } from './literature.store';
+import { ResultCard } from './LiteratureResultCard';
 
 const useStyles = makeStyles({
   list: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
-  card: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
-    paddingBottom: tokens.spacingVerticalM,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  meta: { color: tokens.colorNeutralForeground3 },
-  badges: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
   ranking: { color: tokens.colorNeutralForeground3 },
   sent: {
     display: 'flex',
@@ -63,107 +48,66 @@ const useStyles = makeStyles({
     wordBreak: 'break-word',
     color: tokens.colorNeutralForeground1,
   },
-  abstract: {
-    color: tokens.colorNeutralForeground2,
-    maxHeight: '5.5em',
-    overflow: 'hidden',
-  },
 });
 
-const TONE_APPEARANCE = {
-  positive: 'success',
-  neutral: 'informative',
-  caution: 'warning',
-  unchecked: 'subtle',
-} as const;
-
-function authorLine(record: AssessedRecord['record']): string {
-  const names = record.authors.map((author) => author.family).filter((name) => name !== '');
-  if (names.length === 0) return '';
-  if (names.length <= 3) return names.join(', ');
-  return `${names.slice(0, 3).join(', ')} et al.`;
-}
-
-function ResultCard({
-  entry,
-  minVenueCitedness,
-}: {
-  entry: AssessedRecord;
-  minVenueCitedness: number;
-}): ReactElement {
-  const styles = useStyles();
-  const { record, signals, updates } = entry;
-  const assessment = assessUpdates(updates);
-  const badges = describeCredibility(signals, minVenueCitedness);
-  const year = record.issued?.year;
-
-  return (
-    <div className={styles.card}>
-      {assessment.blocking.map((update) => (
-        <MessageBar
-          key={`${update.type}-${update.noticeDoi ?? update.label}`}
-          intent={assessment.standsRetracted ? 'error' : 'warning'}
-        >
-          <MessageBarBody>
-            <strong>{update.type.replace(/-/gu, ' ')}</strong>
-            {update.date === null ? '' : ` (${update.date})`}
-            {assessment.standsRetracted ? '' : ' — later reinstated'}
-            {update.noticeDoi === null ? null : (
-              <>
-                {' · '}
-                <Link href={`https://doi.org/${update.noticeDoi}`} target="_blank">
-                  read the notice
-                </Link>
-              </>
-            )}
-          </MessageBarBody>
-        </MessageBar>
-      ))}
-
-      <Subtitle2>
-        {record.url === null ? (
-          record.title
-        ) : (
-          // Opens in the system browser: navigating the pane would discard state
-          // and put a third-party page inside a trusted frame (ADR-028).
-          <Link href={record.url} target="_blank" rel="noreferrer">
-            {record.title}
-          </Link>
-        )}
-      </Subtitle2>
-
-      <Caption1 className={styles.meta}>
-        {[authorLine(record), record.containerTitle, year === undefined ? null : String(year)]
-          .filter((part) => part !== null && part !== '')
-          .join(' · ')}
-        {record.type === 'preprint' ? ' · Preprint — not peer reviewed' : ''}
-      </Caption1>
-
-      {record.abstract === null ? null : (
-        <Caption1 className={styles.abstract}>{record.abstract}</Caption1>
-      )}
-
-      <div className={styles.badges}>
-        {badges.map((badge) => (
-          <Badge
-            key={badge.id}
-            appearance="tint"
-            color={TONE_APPEARANCE[badge.tone]}
-            title={badge.detail}
-          >
-            {badge.label}
-          </Badge>
-        ))}
-      </div>
-    </div>
-  );
-}
-
+// The citation-impact nudge (DECISIONS.md ADR-029's amendment) applies to
+// both ranking modes, so both labels say so — truthfully even when it turns
+// out to be a no-op, since "when available" covers OpenAlex being off.
 const RANKING_LABEL = {
-  semantic: 'Ranked against your selection, on this machine.',
-  lexical: 'Ranked by shared words rather than meaning.',
+  semantic:
+    'Ranked against your selection, on this machine, with a small nudge toward higher citation impact for its year (OpenAlex, when available).',
+  lexical:
+    'Ranked by shared words rather than meaning, with a small nudge toward higher citation impact for its year (OpenAlex, when available).',
   'source-order': "Shown in the source's own order; not ranked against your selection.",
 } as const;
+
+/**
+ * Which checks ran for *none* of the current results — a property of what's
+ * turned on for the whole search, the same for every card. `badgeId` is the
+ * id `describeCredibility` gives the corresponding per-card badge, so a
+ * search-wide gap can be dropped from every card without also dropping a
+ * genuinely per-record one (e.g. the one result with no DOI, while
+ * verification is otherwise on).
+ */
+const SKIPPED_CHECKS = [
+  {
+    badgeId: 'crossref',
+    label: 'retraction/registration',
+    skippedFor: (entry: AssessedRecord) =>
+      !entry.updates.checked || entry.signals.crossref === null,
+  },
+  {
+    badgeId: 'medline',
+    label: 'MEDLINE',
+    skippedFor: (entry: AssessedRecord) => entry.signals.pubmed === null,
+  },
+  {
+    badgeId: 'venue',
+    label: 'venue',
+    skippedFor: (entry: AssessedRecord) => entry.signals.openAlex === null,
+  },
+] as const;
+
+/**
+ * One combined, compact line for every check skipped search-wide — replaces
+ * what used to be a full-width warning `MessageBar` for one check
+ * (retractions) plus a repeated grey badge per card per check (registration,
+ * MEDLINE, venue). A search-wide gap is stated once, not N times, and not at
+ * MessageBar size.
+ */
+function describeSkippedChecks(results: readonly AssessedRecord[]): {
+  note: string | null;
+  suppressedUncheckedIds: ReadonlySet<string>;
+} {
+  const skipped = SKIPPED_CHECKS.filter((check) => results.every(check.skippedFor));
+  const suppressedUncheckedIds = new Set(skipped.map((check) => check.badgeId));
+  if (skipped.length === 0) return { note: null, suppressedUncheckedIds };
+  const gaps = skipped.map((check) => check.label).join(' · ');
+  return {
+    note: `Not checked: ${gaps}. Turn sources on under Settings → Literature to see them.`,
+    suppressedUncheckedIds,
+  };
+}
 
 export function LiteratureResultList(): ReactElement | null {
   const styles = useStyles();
@@ -176,24 +120,13 @@ export function LiteratureResultList(): ReactElement | null {
 
   const verified = results.filter((entry) => verificationStatus(entry.signals) !== 'limited');
   const limited = results.filter((entry) => verificationStatus(entry.signals) === 'limited');
+  const { note: skippedChecksNote, suppressedUncheckedIds } = describeSkippedChecks(results);
 
   return (
     <div className={styles.list}>
-      {results.every((entry) => !entry.updates.checked) ? (
-        /*
-         * One banner, not one per result. Retraction checking is a single
-         * setting: when it is off it is off for every paper, so repeating the
-         * notice on each card was noise that trained the reader to skip exactly
-         * the kind of warning that must not be skipped. The distinction it
-         * preserves — silence is not an all-clear — needs stating once.
-         */
-        <MessageBar intent="warning" layout="multiline">
-          <MessageBarBody>
-            Retractions were not checked. Turn on retraction checking in Settings to see whether any
-            of these papers have been retracted or corrected.
-          </MessageBarBody>
-        </MessageBar>
-      ) : null}
+      {skippedChecksNote === null ? null : (
+        <Caption1 className={styles.ranking}>{skippedChecksNote}</Caption1>
+      )}
 
       <Caption1 className={styles.ranking}>{RANKING_LABEL[ranking]}</Caption1>
 
@@ -237,8 +170,14 @@ export function LiteratureResultList(): ReactElement | null {
         </MessageBar>
       )}
 
-      {verified.map((entry) => (
-        <ResultCard key={entry.record.id} entry={entry} minVenueCitedness={minVenueCitedness} />
+      {verified.map((entry, position) => (
+        <ResultCard
+          key={entry.record.id}
+          entry={entry}
+          index={position + 1}
+          minVenueCitedness={minVenueCitedness}
+          suppressedUncheckedIds={suppressedUncheckedIds}
+        />
       ))}
 
       {limited.length === 0 ? null : (
@@ -260,11 +199,13 @@ export function LiteratureResultList(): ReactElement | null {
                 indexed rather than unsound — coverage is uneven — so they are collapsed, not
                 discarded.
               </Body1>
-              {limited.map((entry) => (
+              {limited.map((entry, position) => (
                 <ResultCard
                   key={entry.record.id}
                   entry={entry}
+                  index={verified.length + position + 1}
                   minVenueCitedness={minVenueCitedness}
+                  suppressedUncheckedIds={suppressedUncheckedIds}
                 />
               ))}
             </>

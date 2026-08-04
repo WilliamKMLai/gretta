@@ -13,7 +13,12 @@ import { z } from 'zod';
 import { StorageError } from '../../types/errors';
 import { STORAGE_VERSIONS } from './keys';
 import { adoptLegacyValue } from './legacy';
-import { conversationsV1ToHistoryV2, settingsV1ToV2, settingsV2ToV3 } from './migrations';
+import {
+  conversationsV1ToHistoryV2,
+  settingsV1ToV2,
+  settingsV2ToV3,
+  settingsV3ToV4,
+} from './migrations';
 import type { StorageKey, StorageService } from './storage.types';
 
 const envelopeSchema = z.object({ version: z.number(), data: z.unknown() });
@@ -29,7 +34,8 @@ const MIGRATIONS: Partial<Record<StorageKey, Record<number, Migration>>> = {
   // ADR-021: conversation threads flatten into single-shot generation records.
   'gretta/history': { 1: conversationsV1ToHistoryV2 },
   // ADR-022: corrected context-window and embedding-model defaults.
-  'gretta/settings': { 1: settingsV1ToV2, 2: settingsV2ToV3 },
+  // ADR-029 amendment: adds litCitationImpactWeight.
+  'gretta/settings': { 1: settingsV1ToV2, 2: settingsV2ToV3, 3: settingsV3ToV4 },
 };
 
 /** The subset of Web Storage the adapter needs; injectable for tests. */

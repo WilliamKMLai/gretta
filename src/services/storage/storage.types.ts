@@ -12,7 +12,11 @@ import type { ZodType } from 'zod';
 
 /** Closed set of persistence slots; one per persisted store. */
 export type StorageKey =
-  'gretta/settings' | 'gretta/history' | 'gretta/prompts' | 'gretta/calibration';
+  | 'gretta/settings'
+  | 'gretta/history'
+  | 'gretta/prompts'
+  | 'gretta/calibration'
+  | 'gretta/literature-cache';
 
 /** Typed, validated, async key-value persistence. */
 export interface StorageService {
