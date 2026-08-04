@@ -10,7 +10,10 @@
  *
  * Ranking is brute-force cosine over the collection's vectors, which is the
  * documented default below the capacity ceiling; sqlite-vec ANN slots in behind
- * `query()` when a corpus actually exceeds it.
+ * `query()` when a corpus actually exceeds it. The ranking matrix (`store.
+ * chunkVectors`) is built lazily and cached per instance — every write path
+ * invalidates it through `invalidateQueryMatrix`, so a stale cache never
+ * outlives the write that would make it wrong.
  */
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
@@ -25,8 +28,15 @@ import type {
 import { DEFAULT_CHUNK_OPTIONS, chunkBlocks } from './chunk.mts';
 import { EmbedUnreachableError, createEmbedder } from './embedder.mts';
 import { isSupported, parseFile } from './parse.mts';
-import { topK } from './score.mts';
+import { topKPacked } from './score.mts';
 import { contentHash, type SqliteStore, type StoredChunk } from './store.sqlite.mts';
+
+/** The cached ranking matrix for one collection (ADR-020 amendment). */
+interface QueryMatrix {
+  matrix: Float32Array;
+  rowIds: number[];
+  dims: number;
+}
 
 /** Capacity ceiling for the fast-ranking readout (ADR-020 post-review: 30 000). */
 export const KB_MAX_CHUNKS = 30_000;
@@ -50,6 +60,7 @@ export class CollectionIndexer {
   private skipped: { path: string; reason: string }[] = [];
   private readonly listeners = new Set<ProgressListener>();
   private runToken = 0;
+  private queryMatrix: QueryMatrix | null = null;
 
   constructor(
     config: CollectionConfig,
@@ -106,7 +117,13 @@ export class CollectionIndexer {
       folders: config.folders,
       embeddingModel: config.embeddingModel,
     });
+    this.invalidateQueryMatrix(); // upsertCollection may itself clear on a model change
     await this.reindex();
+  }
+
+  /** Drops the cached ranking matrix; the next `query()` rebuilds it from the store. */
+  private invalidateQueryMatrix(): void {
+    this.queryMatrix = null;
   }
 
   /**
@@ -116,6 +133,7 @@ export class CollectionIndexer {
   async reindex(full = false): Promise<void> {
     const token = ++this.runToken;
     this.skipped = [];
+    this.invalidateQueryMatrix();
     if (this.config.folders.length === 0) {
       this.store.clearCollection(this.config.id);
       this.emit({ type: 'phase', phase: 'disabled' });
@@ -132,7 +150,10 @@ export class CollectionIndexer {
     // Files recorded previously but no longer present are removed.
     const present = new Set(files.map((file) => file.source));
     for (const source of this.store.indexedSources(this.config.id)) {
-      if (!present.has(source)) this.store.removeFile(this.config.id, source);
+      if (!present.has(source)) {
+        this.store.removeFile(this.config.id, source);
+        this.invalidateQueryMatrix();
+      }
     }
 
     this.emit({ type: 'phase', phase: 'indexing' });
@@ -188,6 +209,7 @@ export class CollectionIndexer {
         continue;
       }
       this.store.replaceFile(this.config.id, file.source, hash, stored);
+      this.invalidateQueryMatrix();
       this.emit({ type: 'file', path: file.source, filesDone: done, totalFiles: files.length });
     }
 
@@ -204,26 +226,48 @@ export class CollectionIndexer {
     this.emit({ type: 'skip', path: source, reason });
   }
 
-  /** Embeds the query and ranks this collection's chunks. */
+  /** Embeds the query and ranks this collection's chunks via the cached matrix. */
   async query(text: string, k?: number): Promise<RetrievedChunk[]> {
     if (text.trim() === '') return [];
-    const rows = this.store.allChunks([this.config.id]);
-    if (rows.length === 0) return [];
+    const { matrix, rowIds, dims } = this.getQueryMatrix();
+    if (rowIds.length === 0) return [];
     const embedder = createEmbedder(this.config.embeddingModel, this.ollamaUrl);
     const [vector] = await embedder.embed([text]);
     if (vector === undefined) return [];
-    return topK(
-      vector,
-      rows.map((row) => ({ payload: row, embedding: row.embedding })),
+    const matches = topKPacked(
+      Float32Array.from(vector),
+      matrix,
+      dims,
+      rowIds.length,
       k ?? this.defaults.topK,
       this.defaults.minScore,
-    ).map(({ payload, score }) => ({
-      collectionId: payload.collectionId,
-      source: payload.source,
-      locator: { page: payload.page, paragraph: payload.paragraph },
-      text: payload.text,
-      score,
-    }));
+    );
+    if (matches.length === 0) return [];
+    // -1 is an impossible rowid (SQLite rowids start at 1); it only surfaces if
+    // `match.index` were ever out of range, in which case the lookup below
+    // simply misses rather than throwing.
+    const rowIdFor = (index: number): number => rowIds[index] ?? -1;
+    const winners = matches.map((match) => rowIdFor(match.index));
+    const byRowId = new Map(this.store.chunksByRowIds(winners).map((row) => [row.rowId, row]));
+    const results: RetrievedChunk[] = [];
+    for (const match of matches) {
+      const row = byRowId.get(rowIdFor(match.index));
+      if (row === undefined) continue; // vanished between the matrix build and this fetch
+      results.push({
+        collectionId: row.collectionId,
+        source: row.source,
+        locator: { page: row.page, paragraph: row.paragraph },
+        text: row.text,
+        score: match.score,
+      });
+    }
+    return results;
+  }
+
+  /** Builds (and caches) this collection's ranking matrix on first use after invalidation. */
+  private getQueryMatrix(): QueryMatrix {
+    this.queryMatrix ??= this.store.chunkVectors([this.config.id]);
+    return this.queryMatrix;
   }
 
   /** Enumerates supported files across every configured folder. */

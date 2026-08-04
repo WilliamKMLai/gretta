@@ -1,9 +1,9 @@
 # GRETTA — Roadmap
 
-GRETTA 1.0 is a complete local writing assistant: generation, a prompt library, a local
+GRETTA is a complete local writing assistant: generation, a prompt library, a local
 knowledge base, generation history, and scholarly literature search, all running against
 your own Ollama daemon with nothing else leaving the machine. This document covers what
-shipped in 1.0 and what comes after it.
+has shipped so far and what comes after it. No formal version has been released yet.
 
 Phase numbers below are stable labels referenced throughout [DECISIONS.md](DECISIONS.md) and
 in commit history — they are kept for traceability, not because work is still in flight.
@@ -13,7 +13,7 @@ for the process a new phase follows.
 
 ---
 
-## Shipped in v1.0
+## Shipped so far
 
 - **Phases 1–8 — Core writing loop.** Model and prompt pickers, a prompt box with a
   document-context chip (selection, paragraph, or whole document), streaming generation with

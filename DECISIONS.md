@@ -835,6 +835,58 @@ does not gate RAG.
   (`curl -k /health`); EADDRINUSE guard exits with guidance ✓. Type stripping verified
   unflagged on Node 22.22 and flag-accepted for the 22.13 floor.
 
+**Amendment (2026-08-04) — retrieval rewrite closes the gap to the documented number.**
+This document's storage section claimed "a full scan ranks in low-tens-of-ms," but the
+code path it described did not: `allChunks` boxed every stored `Float32Array` blob into a
+`number[]` via `Array.from` on every query, and `topK` recomputed both vectors' norms
+from scratch on every comparison even though the stored norms never change. Measured
+end-to-end (decode + score + sort, one machine, median of 7 runs, 768-dim vectors):
+
+| Chunks | Old (`allChunks` + `topK`) | New, warm (`topKPacked`, cached matrix) | Speedup |
+| ------ | -------------------------- | --------------------------------------- | ------- |
+| 3,000  | 35.7 ms                    | 1.9 ms                                  | ~19x    |
+| 10,000 | 125.6 ms                   | 5.9 ms                                  | ~22x    |
+| 30,000 | 375.3 ms                   | 17.6 ms                                 | ~21x    |
+
+Absolute numbers are machine-dependent, but the qualitative result — a ~20x-plus win,
+landing warm retrieval at the 30,000-chunk ceiling inside the "low-tens-of-ms" this
+document always claimed — is not.
+
+_What changed._ `SqliteStore.chunkVectors` packs a collection's vectors into one
+contiguous, L2-normalized `Float32Array` (rows whose blob length disagrees with the
+collection's dimension — leftovers from a model change — are skipped, never scored).
+`score.mts`'s `topKPacked` scores it with a bare dot product per row (both sides
+pre-normalized) and a bounded insertion into two fixed-size arrays sized `min(k, count)`,
+instead of a full sort of every row. Blobs stay exactly as they are on disk — no storage
+migration, no reindex required to benefit. `CollectionIndexer` caches the built matrix
+per instance, building it lazily on first `query()` and invalidating it on every write
+path (`replaceFile`, `removeFile`, `clearCollection`, `setConfig`, and unconditionally at
+the start of every `reindex()`) so a stale cache can never outlive the write that would
+make it wrong. `allChunks` and `topK` are unchanged and still exported — `allChunks` has
+other callers, both remain covered by their own tests — but production retrieval no
+longer calls either.
+
+_Output equivalence, the criterion that matters most here._ Verified directly at each
+size above, not just by the shared `score.test.mts` suite: `allChunks`+`topK` and
+`chunkVectors`+`topKPacked` were run against identical stored data and an identical query
+vector, and the resulting top-8 chunk texts, in order, were identical at all three sizes.
+Retrieval drives citation provenance, so this was checked before anything else.
+
+_Memory._ The cached matrix is `count * dims * 4` bytes — 92.2 MB at the 30,000-chunk
+ceiling and 768 dims, matching this document's original estimate. That memory is held
+once per collection per companion process lifetime, not allocated and discarded on every
+query the way `allChunks`'s `Array.from` was.
+
+_The 30,000 threshold is now provisional._ It was set against an implementation that was
+this much slower than it needed to be; now that "low-tens-of-ms" is real at that ceiling
+rather than aspirational, whether 30,000 is still the right number — or whether a faster
+floor changes the sqlite-vec calculus — is an open re-measurement rather than a decision
+made here. `KB_MAX_CHUNKS` is unchanged by this amendment.
+
+`store.sqlite.mts`'s docstring is corrected to attribute the low-tens-of-ms claim to the
+`chunkVectors` + `topKPacked` path specifically, rather than to the module in general —
+`allChunks` remains the slower, unoptimized shape it always was.
+
 ## ADR-021 — Generation history replaces the multi-conversation model
 
 **Status:** Accepted (Phase 12, 2026-07-23)

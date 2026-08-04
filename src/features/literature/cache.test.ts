@@ -91,10 +91,13 @@ describe('cacheKey', () => {
     ['a different source set', ['cats', ['pubmed', 'openalex'], 2020, 50]],
     ['a different fromYear', ['cats', ['pubmed'], 2021, 50]],
     ['a different resultsPerSource', ['cats', ['pubmed'], 2020, 20]],
-  ] as const)('differs on %s', (_label, args) => {
-    const base = cacheKey('cats', ['pubmed'], 2020, 50);
-    expect(cacheKey(...args)).not.toBe(base);
-  });
+  ] as const)(
+    'differs on %s',
+    (_label, args: readonly [string, readonly string[], number, number]) => {
+      const base = cacheKey('cats', ['pubmed'], 2020, 50);
+      expect(cacheKey(...args)).not.toBe(base);
+    },
+  );
 });
 
 describe('enabledSourceKeys', () => {

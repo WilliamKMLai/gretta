@@ -24,6 +24,7 @@ const LEGACY_KEYS: Record<StorageKey, string> = {
   'gretta/prompts': 'wordllama/prompts',
   // Introduced after the rebrand; there is nothing to inherit.
   'gretta/calibration': '',
+  'gretta/literature-cache': '',
 };
 
 /**

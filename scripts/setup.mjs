@@ -174,7 +174,9 @@ if (isMac) {
 
 console.log(`\n${BOLD}${failures === 0 ? 'Ready.' : 'Setup incomplete.'}${RESET}`);
 if (failures === 0) {
-  console.log(`\nNext: run this in Terminal: ${BOLD}${isMac ? 'pnpm dev:mac' : 'pnpm dev'}${RESET}`);
+  console.log(
+    `\nNext: run this in Terminal: ${BOLD}${isMac ? 'pnpm dev:mac' : 'pnpm dev'}${RESET}`,
+  );
   console.log(
     `${DIM}Then open Word, restart it once when prompted, go to the Home tab, and find GRETTA under Add-ins.${RESET}\n`,
   );

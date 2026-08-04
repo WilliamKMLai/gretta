@@ -216,16 +216,16 @@ deeper; not necessary just to use it.
 
 ## Documentation
 
-| File                                             | What it covers                                                                |
-| ------------------------------------------------ | ----------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](ARCHITECTURE.md)               | Layers, service contracts, state map, streaming pipeline, error taxonomy      |
-| [ROADMAP.md](ROADMAP.md)                         | What shipped in v1.0, and the post-v1 direction                               |
-| [CONTRIBUTING.md](CONTRIBUTING.md)               | Dev setup, the quality gate, and the ADR-first rule for architectural changes |
-| [DECISIONS.md](DECISIONS.md)                     | Architecture Decision Records                                                 |
-| [docs/PROMPTS.md](docs/PROMPTS.md)               | What each of the 12 built-in prompts does, and how to write your own          |
-| [docs/SIDELOADING.md](docs/SIDELOADING.md)       | Installing the dev build into Word on each platform                           |
-| [docs/KNOWLEDGE-BASE.md](docs/KNOWLEDGE-BASE.md) | Setting up and using the local knowledge base (RAG)                           |
-| [docs/LITERATURE-SEARCH.md](docs/LITERATURE-SEARCH.md) | Setting up and running literature search, and reading its results                   |
+| File                                                   | What it covers                                                                |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                     | Layers, service contracts, state map, streaming pipeline, error taxonomy      |
+| [ROADMAP.md](ROADMAP.md)                               | What's shipped so far, and the direction ahead                                |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                     | Dev setup, the quality gate, and the ADR-first rule for architectural changes |
+| [DECISIONS.md](DECISIONS.md)                           | Architecture Decision Records                                                 |
+| [docs/PROMPTS.md](docs/PROMPTS.md)                     | What each of the 12 built-in prompts does, and how to write your own          |
+| [docs/SIDELOADING.md](docs/SIDELOADING.md)             | Installing the dev build into Word on each platform                           |
+| [docs/KNOWLEDGE-BASE.md](docs/KNOWLEDGE-BASE.md)       | Setting up and using the local knowledge base (RAG)                           |
+| [docs/LITERATURE-SEARCH.md](docs/LITERATURE-SEARCH.md) | Setting up and running literature search, and reading its results             |
 
 ## Scripts
 

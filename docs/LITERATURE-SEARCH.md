@@ -54,7 +54,7 @@ yet built (see `ROADMAP.md`).
    a key (keys replaced the older email-based pool). Without one you get a small trial
    allowance per day, then requests start failing — which looks like a search that suddenly
    finds nothing. Create an account at [openalex.org](https://openalex.org), copy the key
-   from *Settings → API* there, and paste it into **OpenAlex API key** in GRETTA. The
+   from _Settings → API_ there, and paste it into **OpenAlex API key** in GRETTA. The
    underlying data stays free and CC0; the key just covers the query service.
 
 4. **PubMed and Crossref (bioRxiv/medRxiv) need nothing**, but accept an optional **contact
@@ -70,7 +70,7 @@ yet built (see `ROADMAP.md`).
 6. **Pick a query-drafting model (optional).** Any installed text model works — it turns your
    selected passage into keywords, on your machine. Leave it as "Same as the general model"
    unless you want something smaller/faster just for this. This is separate from the
-   embedding model (set under *Settings → Connection*) that does the relevance ranking.
+   embedding model (set under _Settings → Connection_) that does the relevance ranking.
 
 ## Running a search
 
@@ -124,7 +124,7 @@ Each result is a card showing:
   with a link to the actual notice.
 - **A ranking banner** at the top of the list, stating how it was ordered: ranked against your
   selection on your machine (the normal case), ranked by shared words rather than meaning (if
-  your embedding model couldn't be reached — check *Settings → Connection*), or shown in each
+  your embedding model couldn't be reached — check _Settings → Connection_), or shown in each
   source's own order (if nothing was rankable).
 
 Results with none of the indexing/verification checks passed are collapsed behind a

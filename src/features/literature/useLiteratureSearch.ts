@@ -130,7 +130,9 @@ export function useLiteratureSearch(): UseLiteratureSearch {
     const perSource = settings.litResultsPerSource;
     const controller = new AbortController();
 
-    const enabledSources = enabledSourceKeys(settings.litSources);
+    const enabledSources = enabledSourceKeys(
+      settings.litSources as unknown as Record<string, boolean>,
+    );
     const cacheEntryKey = cacheKey(queryText(approval.query), enabledSources, fromYear, perSource);
 
     try {

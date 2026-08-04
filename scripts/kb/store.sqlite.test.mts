@@ -117,4 +117,82 @@ describe('SqliteStore', () => {
     expect(second.allChunks(['a']).map((row) => row.text)).toEqual(['kept']);
     second.close();
   });
+
+  describe('chunkVectors', () => {
+    it('L2-normalizes each row and packs them contiguously', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      store.replaceFile('a', 'doc.md', 'h1', [
+        chunk('doc.md', 'one', [3, 4]), // norm 5
+        chunk('doc.md', 'two', [0, 2]), // norm 2
+      ]);
+      const { matrix, rowIds, dims } = store.chunkVectors(['a']);
+      expect(dims).toBe(2);
+      expect(rowIds).toHaveLength(2);
+      const [a0, a1, b0, b1] = Array.from(matrix);
+      expect(a0).toBeCloseTo(0.6, 5);
+      expect(a1).toBeCloseTo(0.8, 5);
+      expect(b0).toBeCloseTo(0, 5);
+      expect(b1).toBeCloseTo(1, 5);
+    });
+
+    it('leaves a zero vector as zeros instead of dividing by zero', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      store.replaceFile('a', 'doc.md', 'h1', [chunk('doc.md', 'zero', [0, 0])]);
+      const { matrix } = store.chunkVectors(['a']);
+      expect(Array.from(matrix)).toEqual([0, 0]);
+    });
+
+    it('returns an empty matrix for no collection ids or an empty collection', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      expect(store.chunkVectors([])).toEqual({ matrix: new Float32Array(0), rowIds: [], dims: 0 });
+      expect(store.chunkVectors(['a'])).toEqual({
+        matrix: new Float32Array(0),
+        rowIds: [],
+        dims: 0,
+      });
+    });
+
+    it('skips rows whose stored dimension disagrees with the first row', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      // Simulates leftover rows from before a model/dimension change — the store
+      // itself doesn't validate embedding length against the declared model.
+      store.replaceFile('a', 'one.md', 'h1', [chunk('one.md', 'a', [1, 0, 0])]);
+      store.replaceFile('a', 'two.md', 'h2', [chunk('two.md', 'b', [1, 0])]);
+      const { rowIds, dims } = store.chunkVectors(['a']);
+      expect(dims).toBe(3);
+      expect(rowIds).toHaveLength(1);
+    });
+
+    it('scopes to the requested collections only', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      store.upsertCollection({ id: 'b', name: 'B', folders: [], embeddingModel: 'm1' });
+      store.replaceFile('a', 'a.md', 'h', [chunk('a.md', 'in a', [1, 0])]);
+      store.replaceFile('b', 'b.md', 'h', [chunk('b.md', 'in b', [0, 1])]);
+      expect(store.chunkVectors(['a']).rowIds).toHaveLength(1);
+      expect(store.chunkVectors(['a', 'b']).rowIds).toHaveLength(2);
+    });
+  });
+
+  describe('chunksByRowIds', () => {
+    it('round-trips rowids from chunkVectors back to full rows', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      store.replaceFile('a', 'doc.md', 'h1', [
+        chunk('doc.md', 'first chunk', [1, 0]),
+        chunk('doc.md', 'second chunk', [0, 1]),
+      ]);
+      const { rowIds } = store.chunkVectors(['a']);
+      const rows = store.chunksByRowIds(rowIds);
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.text).sort()).toEqual(['first chunk', 'second chunk']);
+      expect(rows.every((r) => r.collectionId === 'a')).toBe(true);
+    });
+
+    it('returns [] for an empty rowid list and silently skips ids that no longer exist', () => {
+      store.upsertCollection({ id: 'a', name: 'A', folders: [], embeddingModel: 'm1' });
+      store.replaceFile('a', 'doc.md', 'h1', [chunk('doc.md', 'x', [1, 0])]);
+      expect(store.chunksByRowIds([])).toEqual([]);
+      const { rowIds } = store.chunkVectors(['a']);
+      expect(store.chunksByRowIds([...rowIds, 999_999])).toHaveLength(1);
+    });
+  });
 });

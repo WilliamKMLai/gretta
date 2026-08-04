@@ -66,3 +66,80 @@ export function topK<T>(
     .slice(0, k)
     .map(({ payload, score }) => ({ payload, score }));
 }
+
+/** One `topKPacked` match: `index` is a row position into the source matrix. */
+export interface PackedMatch {
+  index: number;
+  score: number;
+}
+
+/**
+ * `topK`'s ranking contract over a packed, pre-normalized matrix instead of
+ * boxed `Scorable<T>[]` — the fast path a large collection needs (ADR-020
+ * amendment). `matrix` is `count` rows of `dims` L2-normalized float32s laid
+ * out contiguously (row `i` starts at `i * dims`); `query` is raw (not yet
+ * normalized — this function normalizes it once, up front). With both sides
+ * unit-length, cosine similarity is a bare dot product, so the per-row loop
+ * is one multiply-accumulate and no `Math.sqrt`.
+ *
+ * Selection is bounded insertion into two fixed-size arrays sized `min(k,
+ * count)`, kept sorted descending — no full sort of `count` elements, no
+ * per-row allocation. A row that cannot beat the current k-th score (once
+ * the arrays are full) is rejected before insertion. Ties keep row-scan
+ * order (ascending `index`), matching `topK`'s stable sort. `minScore` is
+ * applied per-row before insertion, so a below-threshold row never occupies
+ * a slot a qualifying later row would need — equivalent to `topK`'s
+ * filter-after-sort, proven by the fact both operate on the same
+ * score-descending prefix. Negative similarities floor to 0, as in `topK`.
+ */
+export function topKPacked(
+  query: Float32Array,
+  matrix: Float32Array,
+  dims: number,
+  count: number,
+  k: number,
+  minScore = 0,
+): PackedMatch[] {
+  if (k <= 0 || count <= 0 || dims <= 0) return [];
+
+  let queryNorm = 0;
+  for (let d = 0; d < dims; d += 1) queryNorm += (query[d] ?? 0) * (query[d] ?? 0);
+  queryNorm = Math.sqrt(queryNorm);
+  const q = new Float32Array(dims);
+  if (queryNorm > 0) {
+    for (let d = 0; d < dims; d += 1) q[d] = (query[d] ?? 0) / queryNorm;
+  }
+
+  const bound = Math.min(k, count);
+  const scores = new Float64Array(bound);
+  const indices = new Int32Array(bound).fill(-1);
+  let filled = 0;
+  let floor = -Infinity;
+
+  for (let row = 0; row < count; row += 1) {
+    const base = row * dims;
+    let dot = 0;
+    for (let d = 0; d < dims; d += 1) dot += (matrix[base + d] ?? 0) * (q[d] ?? 0);
+    const clamped = dot > 1 ? 1 : dot < -1 ? -1 : dot;
+    const score = clamped > 0 ? clamped : 0;
+    if (score < minScore) continue;
+    if (filled === bound && score <= floor) continue;
+
+    let pos = filled < bound ? filled : bound - 1;
+    while (pos > 0 && (scores[pos - 1] ?? -Infinity) < score) {
+      scores[pos] = scores[pos - 1] ?? -Infinity;
+      indices[pos] = indices[pos - 1] ?? -1;
+      pos -= 1;
+    }
+    scores[pos] = score;
+    indices[pos] = row;
+    if (filled < bound) filled += 1;
+    if (filled === bound) floor = scores[bound - 1] ?? -Infinity;
+  }
+
+  const out: PackedMatch[] = [];
+  for (let i = 0; i < filled; i += 1) {
+    out.push({ index: indices[i] ?? -1, score: scores[i] ?? -Infinity });
+  }
+  return out;
+}

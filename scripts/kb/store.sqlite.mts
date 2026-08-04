@@ -6,9 +6,12 @@
  * indexing incremental: a file whose hash is unchanged is skipped without being
  * re-read, re-chunked, or re-embedded; a changed file has its rows replaced;
  * a deleted file has its rows dropped. Embeddings are stored as float32 blobs
- * (~3 KB at 768 dims), so a 30 000-chunk collection is ~90 MB and a full scan
- * ranks in low-tens-of-ms — the reason brute-force cosine is the default and
- * sqlite-vec is deferred until the ceiling is actually hit.
+ * (~3 KB at 768 dims), so a 30 000-chunk collection is ~90 MB. `chunkVectors`
+ * packs those blobs into one normalized matrix for `topKPacked` (score.mts)
+ * to scan; that path ranks in low-tens-of-ms at the ADR-020 ceiling, why
+ * brute-force cosine is the default and sqlite-vec stays deferred. `allChunks`
+ * decodes every row into a boxed `number[]` instead — kept for callers that
+ * need that shape, but it is not the fast path.
  *
  * The embedding model is recorded per collection: vectors from different models
  * are not comparable, so a model change invalidates that collection's rows and
@@ -25,6 +28,16 @@ export interface StoredChunk {
   paragraph: number | null;
   text: string;
   embedding: number[];
+}
+
+/** A stored chunk's row, identified by rowid, without its vector. */
+export interface ChunkRow {
+  rowId: number;
+  collectionId: string;
+  source: string;
+  page: number | null;
+  paragraph: number | null;
+  text: string;
 }
 
 /** Content hash of a file's bytes — the incremental-indexing key. */
@@ -236,5 +249,55 @@ export class SqliteStore {
       text: row.text,
       embedding: fromBlob(row.embedding),
     }));
+  }
+
+  /**
+   * Packs vectors into one L2-normalized matrix for `topKPacked` (score.mts).
+   * `dims` comes from the first row; a row whose blob length disagrees is
+   * skipped (predates an embedding-model change — ADR-020). A zero vector is
+   * left as zeros (not normalized), which then scores 0 against anything.
+   */
+  chunkVectors(collectionIds: string[]): { matrix: Float32Array; rowIds: number[]; dims: number } {
+    if (collectionIds.length === 0) return { matrix: new Float32Array(0), rowIds: [], dims: 0 };
+    const placeholders = collectionIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT rowid AS rowId, embedding FROM chunks WHERE collectionId IN (${placeholders})`,
+      )
+      .all(...collectionIds) as { rowId: number; embedding: Buffer }[];
+    if (rows.length === 0) return { matrix: new Float32Array(0), rowIds: [], dims: 0 };
+
+    const dims = (rows[0]?.embedding.byteLength ?? 0) / 4;
+    const rowIds: number[] = [];
+    const blobs: Buffer[] = [];
+    for (const row of rows) {
+      if (row.embedding.byteLength / 4 !== dims) continue; // mismatched dims: predates a model change
+      rowIds.push(row.rowId);
+      blobs.push(row.embedding);
+    }
+
+    const matrix = new Float32Array(rowIds.length * dims);
+    blobs.forEach((blob, i) => {
+      const floats = new Float32Array(blob.buffer, blob.byteOffset, dims);
+      let norm = 0;
+      for (let d = 0; d < dims; d += 1) norm += (floats[d] ?? 0) * (floats[d] ?? 0);
+      norm = Math.sqrt(norm);
+      if (norm === 0) return;
+      const base = i * dims;
+      for (let d = 0; d < dims; d += 1) matrix[base + d] = (floats[d] ?? 0) / norm;
+    });
+    return { matrix, rowIds, dims };
+  }
+
+  /** Full rows (including `text`, excluding the vector) for the given rowids — the top-k survivors. */
+  chunksByRowIds(rowIds: number[]): ChunkRow[] {
+    if (rowIds.length === 0) return [];
+    const placeholders = rowIds.map(() => '?').join(',');
+    return this.db
+      .prepare(
+        `SELECT rowid AS rowId, collectionId, source, page, paragraph, text
+         FROM chunks WHERE rowid IN (${placeholders})`,
+      )
+      .all(...rowIds) as ChunkRow[];
   }
 }

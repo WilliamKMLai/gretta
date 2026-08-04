@@ -32,7 +32,9 @@ export type RankingMode = 'semantic' | 'lexical' | 'source-order';
 export interface SourceQuery {
   source: string;
   query: string;
-  note?: string;
+  // `| undefined` (not just `?`) because zod's `.optional()` output includes
+  // undefined explicitly, and exactOptionalPropertyTypes requires the match.
+  note?: string | undefined;
 }
 
 export interface LiteratureState {

@@ -71,10 +71,15 @@ All notable changes to this project are documented here. Format loosely follows
   likely to surface near the top; it will not pull an unrelated but highly-cited paper into a
   search it doesn't belong in. How strong the nudge is is now a "Citation impact weight" field
   under Advanced search parameters (default 0.25, was a fixed 0.15); set it to 0 to turn it off.
+- Knowledge-base retrieval is roughly 20x faster at collections near the 30,000-chunk capacity
+  ceiling, and proportionally faster below it (ADR-020). Ranking now scans a single packed,
+  pre-normalized matrix with a bare dot product instead of decoding every stored vector into a
+  boxed array on every query. No reindex is required — existing collections benefit immediately.
 
-## [1.0.0]
+## Initial feature set
 
-Initial public release.
+No formal version has been released yet; this section groups the feature set built before
+this changelog started tracking day-to-day changes individually.
 
 ### Added
 

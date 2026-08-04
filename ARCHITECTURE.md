@@ -1,6 +1,6 @@
 # GRETTA — Architecture
 
-> Status: **v1.0** · Last updated: 2026-08-03
+> Status: **pre-release** · Last updated: 2026-08-04
 > Companion documents: [ROADMAP.md](./ROADMAP.md) · [DECISIONS.md](./DECISIONS.md)
 
 GRETTA is a Microsoft Word **task pane add-in** that acts as a fully local AI writing
