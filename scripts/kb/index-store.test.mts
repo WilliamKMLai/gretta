@@ -198,6 +198,102 @@ describe('CollectionIndexer query-matrix caching', () => {
   });
 });
 
+describe('CollectionIndexer query-embedding dedupe seam', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A store with one 2-dim chunk, so `query()` gets past its empty-matrix return. */
+  function storeWithOneChunk(): ReturnType<typeof createFakeStore> {
+    const store = createFakeStore();
+    store.chunkVectors.mockReturnValue({
+      matrix: Float32Array.from([1, 0]),
+      rowIds: [10],
+      dims: 2,
+    });
+    store.chunksByRowIds.mockImplementation((rowIds: number[]) =>
+      rowIds.map((rowId): ChunkRow => ({
+        rowId,
+        collectionId: 'a',
+        source: 'doc.md',
+        page: null,
+        paragraph: 1,
+        text: 'chunk text',
+      })),
+    );
+    return store;
+  }
+
+  it('exposes embeddingModel without touching the store (the registry grouping key)', () => {
+    const store = createFakeStore();
+    const indexer = new CollectionIndexer(
+      config({ embeddingModel: 'nomic-embed-text' }),
+      asStore(store),
+      DEFAULTS,
+      'http://x',
+    );
+    expect(indexer.embeddingModel).toBe('nomic-embed-text');
+    expect(store.counts).not.toHaveBeenCalled();
+  });
+
+  it('reports hasChunks from the matrix, false when the collection is empty', () => {
+    const empty = new CollectionIndexer(config(), asStore(createFakeStore()), DEFAULTS, 'http://x');
+    expect(empty.hasChunks).toBe(false);
+
+    const filled = new CollectionIndexer(
+      config(),
+      asStore(storeWithOneChunk()),
+      DEFAULTS,
+      'http://x',
+    );
+    expect(filled.hasChunks).toBe(true);
+  });
+
+  it('embedQuery returns null for blank text without reaching the embedder', async () => {
+    // No GRETTA_KB_FAKE_EMBED and an unreachable URL: an attempted embed would
+    // throw, so returning null proves the blank-text guard ran first.
+    const indexer = new CollectionIndexer(
+      config(),
+      asStore(createFakeStore()),
+      DEFAULTS,
+      'http://x',
+    );
+    await expect(indexer.embedQuery('   ')).resolves.toBeNull();
+  });
+
+  it('query() given a precomputed vector does not embed for itself', async () => {
+    const indexer = new CollectionIndexer(
+      config(),
+      asStore(storeWithOneChunk()),
+      DEFAULTS,
+      'http://x',
+    );
+    const embedQuery = vi.spyOn(indexer, 'embedQuery');
+
+    const results = await indexer.query('hello', 8, [1, 0]);
+
+    expect(embedQuery).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    expect(results[0]?.text).toBe('chunk text');
+  });
+
+  it('query() still embeds for itself when no vector is supplied', async () => {
+    vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
+    const indexer = new CollectionIndexer(
+      config(),
+      asStore(storeWithOneChunk()),
+      DEFAULTS,
+      'http://x',
+    );
+    const embedQuery = vi.spyOn(indexer, 'embedQuery');
+
+    await indexer.query('hello');
+
+    expect(embedQuery).toHaveBeenCalledTimes(1);
+    expect(embedQuery).toHaveBeenCalledWith('hello');
+  });
+});
+
 describe('capacityPct and overCapacity', () => {
   it.each([
     [0, 0],

@@ -900,6 +900,39 @@ retrieved excerpt is either indexed and citable, or it was never indexed at all,
 quietly omitted past some limit. A user who indexes a large folder gets a working, slower
 knowledge base and an honest warning, not a partially-built one.
 
+**Amendment (2026-08-05) — the query is embedded once per model, not once per collection.**
+`CollectionRegistry.query()` fanned out to every bound collection in parallel, and each
+`CollectionIndexer.query()` independently embedded the same query text. Three collections
+sharing an embedding model meant three identical `/api/embed` round trips, fired
+concurrently, for one user query.
+
+_What changed._ `registry.query()` now groups the requested collections by
+`embeddingModel`, embeds the text once per distinct model via a new
+`CollectionIndexer.embedQuery()`, and passes that vector to each collection in the group
+through `query()`'s new optional `precomputedVector` parameter. Ranking, merging, sorting
+and the top-k slice are untouched.
+
+_Why the grouping key is the model, and why that is not incidental._ An embedding is a pure
+function of (model, text), so collections declaring the same model would each have computed
+bit-identical vectors — sharing one is not an approximation. Across models it would be
+plain wrong, and this ADR's own "vectors from different models are not comparable"
+invariant is precisely the rule that makes model the correct grouping key. Retrieval output
+is therefore unchanged: the same chunks with the same scores, so everything downstream —
+including ADR-025's prompt-budget trimming — behaves exactly as before. This is a
+network-avoidance change only.
+
+_Empty collections must not start embedding._ A collection with no indexed chunks returns
+from `query()` before it embeds, so it never cost an embed call. Grouping naively would let
+an empty collection lead a group and embed a vector nothing consumes — loading a cold
+embedding model into memory for nothing, which is worst on exactly the low-RAM machines this
+change is meant to help. Collections are filtered on a new `hasChunks` getter before
+grouping, preserving the previous behaviour: no content, no embed.
+
+_Resource effect._ Strictly downward on every axis. One shared vector rather than N
+identical copies; one embed request per model rather than N concurrent ones (the previous
+`Promise.all` put N simultaneous requests on the daemon); and, since `Promise.all` rejects
+on any failure, N chances to fail become one.
+
 ## ADR-021 — Generation history replaces the multi-conversation model
 
 **Status:** Accepted (Phase 12, 2026-07-23)

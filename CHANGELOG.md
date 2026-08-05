@@ -79,6 +79,11 @@ All notable changes to this project are documented here. Format loosely follows
   ceiling, and proportionally faster below it (ADR-020). Ranking now scans a single packed,
   pre-normalized matrix with a bare dot product instead of decoding every stored vector into a
   boxed array on every query. No reindex is required — existing collections benefit immediately.
+- A knowledge-base query is now embedded once per embedding model rather than once per bound
+  collection (ADR-020). A document bound to three collections that share a model previously
+  made three identical embedding requests at once for a single query; it now makes one.
+  Retrieved excerpts and their scores are unchanged — this only removes redundant work, and
+  removes it from the moment in a query where a cold model costs the most.
 
 ## Initial feature set
 

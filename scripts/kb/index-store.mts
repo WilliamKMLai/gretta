@@ -79,6 +79,21 @@ export class CollectionIndexer {
     return this.config.id;
   }
 
+  /** This collection's embedding model — the registry's grouping key for query dedupe. */
+  get embeddingModel(): string {
+    return this.config.embeddingModel;
+  }
+
+  /**
+   * True when this collection has queryable chunks. Lets the registry skip
+   * embedding a group whose collections are all empty: an empty collection
+   * returns before embedding in `query()` below, so it cost no embed call
+   * before the dedupe and must not start costing one now.
+   */
+  get hasChunks(): boolean {
+    return this.getQueryMatrix().rowIds.length > 0;
+  }
+
   onProgress(listener: ProgressListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -227,14 +242,31 @@ export class CollectionIndexer {
     this.emit({ type: 'skip', path: source, reason });
   }
 
-  /** Embeds the query and ranks this collection's chunks via the cached matrix. */
-  async query(text: string, k?: number): Promise<RetrievedChunk[]> {
+  /**
+   * Embeds free-form query text with this collection's model. Split out of
+   * `query()` so the registry can embed once per distinct model and share the
+   * vector across every collection using it — an embedding is a pure function
+   * of (model, text), so collections that declare the same model would each
+   * have computed exactly this. An embed failure still throws.
+   */
+  async embedQuery(text: string): Promise<number[] | null> {
+    if (text.trim() === '') return null;
+    const embedder = createEmbedder(this.config.embeddingModel, this.ollamaUrl);
+    const [vector] = await embedder.embed([text]);
+    return vector ?? null;
+  }
+
+  /**
+   * Ranks this collection's chunks via the cached matrix. `precomputedVector`
+   * is the registry's dedupe path — a vector already embedded with this
+   * collection's model; without it the collection embeds for itself.
+   */
+  async query(text: string, k?: number, precomputedVector?: number[]): Promise<RetrievedChunk[]> {
     if (text.trim() === '') return [];
     const { matrix, rowIds, dims } = this.getQueryMatrix();
     if (rowIds.length === 0) return [];
-    const embedder = createEmbedder(this.config.embeddingModel, this.ollamaUrl);
-    const [vector] = await embedder.embed([text]);
-    if (vector === undefined) return [];
+    const vector = precomputedVector ?? (await this.embedQuery(text));
+    if (vector === null) return [];
     const matches = topKPacked(
       Float32Array.from(vector),
       matrix,

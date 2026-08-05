@@ -103,13 +103,48 @@ export class CollectionRegistry {
     return this.entries.get(id)?.indexer.onProgress(listener) ?? null;
   }
 
-  /** Ranks across several collections at once, best chunks first. */
+  /**
+   * Ranks across several collections at once, best chunks first.
+   *
+   * The query text is embedded ONCE PER DISTINCT EMBEDDING MODEL, not once per
+   * collection: an embedding is a pure function of (model, text), so three
+   * collections sharing a model were previously making three identical
+   * `/api/embed` round trips per query. Grouping is keyed on the model because
+   * ADR-020's "vectors from different models are not comparable" invariant is
+   * exactly what makes sharing safe within a group and wrong across groups.
+   *
+   * Collections with no indexed chunks are dropped before grouping. Such a
+   * collection returns before embedding inside `CollectionIndexer.query()`, so
+   * it never triggered an embed call; letting one lead a group would load a
+   * cold embedding model to produce a vector nothing consumes.
+   */
   async query(collectionIds: string[], text: string, k?: number): Promise<RetrievedChunk[]> {
     const limit = k ?? this.defaults.topK;
-    const perCollection = await Promise.all(
-      collectionIds.map(async (id) => (await this.get(id)?.query(text, limit)) ?? []),
+    if (text.trim() === '') return [];
+
+    const byModel = new Map<string, CollectionIndexer[]>();
+    for (const id of collectionIds) {
+      const indexer = this.get(id);
+      // An unknown id is skipped silently, as it always has been.
+      if (indexer?.hasChunks !== true) continue;
+      const group = byModel.get(indexer.embeddingModel);
+      if (group === undefined) byModel.set(indexer.embeddingModel, [indexer]);
+      else group.push(indexer);
+    }
+
+    const perGroup = await Promise.all(
+      [...byModel.values()].map(async (group) => {
+        // Any member computes the same vector; the first keeps it deterministic.
+        const vector = await group[0]?.embedQuery(text);
+        if (vector === null || vector === undefined) return [];
+        const perCollection = await Promise.all(
+          group.map((indexer) => indexer.query(text, limit, vector)),
+        );
+        return perCollection.flat();
+      }),
     );
-    return perCollection
+
+    return perGroup
       .flat()
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
