@@ -99,6 +99,32 @@ describe('LiteraturePanel', () => {
     });
   });
 
+  it('offers a Cancel button only while something is in flight, and stops it', async () => {
+    const pending = deferred<SelectionInfo>();
+    setServices({
+      office: stubOffice(pending.promise) as OfficeService,
+      ollama: { generate: () => noTokens() } as unknown as OllamaClient,
+    });
+
+    render(wrap(<LiteraturePanel />));
+    expect(screen.queryByRole('button', { name: /^cancel$/i })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /draft a query/i }));
+    const cancelButton = await screen.findByRole('button', { name: /^cancel$/i });
+    await userEvent.click(cancelButton);
+
+    // Idle, and specifically not the error phase: the user asked for this.
+    expect(useLiteratureStore.getState().phase).toBe('idle');
+    expect(useLiteratureStore.getState().error).toBeNull();
+    expect(screen.queryByRole('button', { name: /^cancel$/i })).toBeNull();
+
+    // Settle before the test ends, or the resolution lands outside act().
+    pending.resolve({ text: 'a passage', isEmpty: false });
+    await waitFor(() => {
+      expect(useLiteratureStore.getState().phase).toBe('idle');
+    });
+  });
+
   it('asks for a selection rather than searching an empty passage', async () => {
     setServices({
       office: stubOffice(Promise.resolve({ text: '   ', isEmpty: true })) as OfficeService,

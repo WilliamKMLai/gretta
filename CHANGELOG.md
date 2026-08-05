@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- A Cancel button in the Literature panel, shown while a search or a query draft is running.
+  A search fans out across four scholarly APIs, then enriches, then checks retractions, then
+  ranks locally; until now the only way out of one was to reload the pane. Cancelling is
+  treated as a decision rather than a failure: the pane returns to idle with no error banner,
+  results already on screen are left alone, and the cancelled search is not recorded under
+  "Recent searches". A run that is stopped or superseded can no longer paint its results over
+  a later one that the user actually wanted.
 - Literature search results now cache on-device for 24 hours (ADR-028), so repeating a
   search with the same sources and filters is instant instead of a fresh network round
   trip. A new "Clear literature cache and search history" control in Settings deletes the

@@ -5,13 +5,19 @@
  * because a matching cache entry short-circuited the network. Pressing
  * Search is a deliberate "search now," never a maybe-cached lookup — that
  * fast path belongs only to `reuseSearch` (`LiteratureHistoryList`).
+ *
+ * The cancel cases below guard the half of that feature that is invisible
+ * until it goes wrong. Aborting a signal does not unwind the promises already
+ * awaiting on it, so a cancelled run keeps executing to completion; without
+ * the `isCurrent` guard it eventually calls `setResults` and the search the
+ * user stopped paints over the one they wanted.
  */
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { setServices } from '../../app/services';
 import type { OllamaClient } from '../../services/ollama';
 import type { AssessedRecord, LiteratureRecord } from '../../types/literature';
 import { useSettingsStore } from '../settings';
-import { cacheKey, hashPassage, writeCache } from './cache';
+import { cacheKey, hashPassage, listEntries, writeCache } from './cache';
 import { useLiteratureStore } from './literature.store';
 import { useLiteratureSearch } from './useLiteratureSearch';
 
@@ -65,6 +71,32 @@ const freshRecord: LiteratureRecord = {
   url: null,
   discoveredVia: 'pubmed',
 };
+
+/** What `searchDetailed` resolves with, so a pending one can be typed. */
+interface PubMedDetailed {
+  records: LiteratureRecord[];
+  medlineIndexed: Map<string, boolean>;
+}
+
+/** Resolves only when the test says so, so a run can be cancelled mid-flight. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Turns on exactly one source, so one deferred promise stalls the whole run. */
+function pubmedOnly(): void {
+  useSettingsStore.setState({
+    litEnabled: true,
+    litSources: { pubmed: true, biorxiv: false, medrxiv: false, openalex: false },
+    litVerification: false,
+    litResultsPerSource: 20,
+  });
+  useLiteratureStore.setState({ draft: 'boltzgen', passage: 'the selected passage' });
+}
 
 const staleEntry: AssessedRecord = {
   record: { ...freshRecord, id: 'stale-1', title: 'Stale Cached Paper' },
@@ -122,5 +154,100 @@ describe('useLiteratureSearch().search', () => {
     const state = useLiteratureStore.getState();
     expect(state.phase).toBe('done');
     expect(state.results.map((entry) => entry.record.id)).toEqual(['fresh-1']);
+  });
+});
+
+describe('useLiteratureSearch().cancel', () => {
+  it('returns to idle silently and drops the cancelled run when it finally resolves', async () => {
+    pubmedOnly();
+    const pending = deferred<PubMedDetailed>();
+    pubmedSpies.searchDetailed.mockReturnValue(pending.promise);
+
+    const { result } = renderHook(() => useLiteratureSearch());
+    let run!: Promise<void>;
+    act(() => {
+      run = result.current.search();
+    });
+    await waitFor(() => {
+      expect(useLiteratureStore.getState().phase).toBe('searching');
+    });
+
+    act(() => {
+      result.current.cancel();
+    });
+    // A user-initiated cancel is not an error, so no banner and no `error`
+    // phase — the two are the same thing to the person reading the pane.
+    expect(useLiteratureStore.getState().phase).toBe('idle');
+    expect(useLiteratureStore.getState().error).toBeNull();
+
+    // The abort does not stop the already-issued request from settling.
+    await act(async () => {
+      pending.resolve({ records: [freshRecord], medlineIndexed: new Map() });
+      await run;
+    });
+
+    const state = useLiteratureStore.getState();
+    expect(state.phase).toBe('idle');
+    expect(state.results).toEqual([]);
+    expect(state.error).toBeNull();
+  });
+
+  it('shows only the second search when one is cancelled and another started', async () => {
+    pubmedOnly();
+    const cancelledRun = deferred<PubMedDetailed>();
+    pubmedSpies.searchDetailed
+      .mockReturnValueOnce(cancelledRun.promise)
+      .mockResolvedValue({ records: [freshRecord], medlineIndexed: new Map() });
+
+    const { result } = renderHook(() => useLiteratureSearch());
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.search();
+    });
+    act(() => {
+      result.current.cancel();
+    });
+    await act(async () => {
+      await result.current.search();
+    });
+
+    expect(useLiteratureStore.getState().results.map((entry) => entry.record.id)).toEqual([
+      'fresh-1',
+    ]);
+
+    // The cancelled run lands last and must not win on that account.
+    await act(async () => {
+      cancelledRun.resolve({
+        records: [{ ...freshRecord, id: 'cancelled-1', doi: '10.1/cancelled' }],
+        medlineIndexed: new Map(),
+      });
+      await first;
+    });
+
+    const state = useLiteratureStore.getState();
+    expect(state.results.map((entry) => entry.record.id)).toEqual(['fresh-1']);
+    expect(state.phase).toBe('done');
+    expect(state.error).toBeNull();
+  });
+
+  it('does not write a cancelled search into the recent-searches cache', async () => {
+    pubmedOnly();
+    const pending = deferred<PubMedDetailed>();
+    pubmedSpies.searchDetailed.mockReturnValue(pending.promise);
+
+    const { result } = renderHook(() => useLiteratureSearch());
+    let run!: Promise<void>;
+    act(() => {
+      run = result.current.search();
+    });
+    act(() => {
+      result.current.cancel();
+    });
+    await act(async () => {
+      pending.resolve({ records: [freshRecord], medlineIndexed: new Map() });
+      await run;
+    });
+
+    expect(await listEntries()).toEqual([]);
   });
 });

@@ -25,7 +25,7 @@ import {
   mergeClasses,
   tokens,
 } from '@fluentui/react-components';
-import { SearchRegular, TextGrammarWandRegular } from '@fluentui/react-icons';
+import { DismissRegular, SearchRegular, TextGrammarWandRegular } from '@fluentui/react-icons';
 import { MAX_QUERY_CHARS } from '../../services/literature';
 import { EmptyState } from '../../components/EmptyState';
 import { useSettingsStore } from '../settings';
@@ -106,7 +106,7 @@ const useStyles = makeStyles({
 export function LiteraturePanel(): ReactElement {
   const styles = useStyles();
   const { phase, passage, draft, error, results, setDraft } = useLiteratureStore();
-  const { captureAndDraft, search, busy } = useLiteratureSearch();
+  const { captureAndDraft, search, cancel, busy } = useLiteratureSearch();
   const litEnabled = useSettingsStore((state) => state.litEnabled);
   const sources = useSettingsStore((state) => state.litSources);
   const litVerification = useSettingsStore((state) => state.litVerification);
@@ -212,6 +212,19 @@ export function LiteraturePanel(): ReactElement {
         >
           {phase === 'searching' ? 'Searching…' : 'Search'}
         </Button>
+        {/*
+         * Rendered only while something is in flight, rather than always
+         * present and disabled: the drafting button above it is the one the
+         * user reaches for repeatedly, and a permanently greyed Cancel beside
+         * Search reads as a control that is broken rather than one that has
+         * nothing to stop. It covers drafting as well as searching — both are
+         * long enough to want out of.
+         */}
+        {busy ? (
+          <Button icon={<DismissRegular />} onClick={cancel}>
+            Cancel
+          </Button>
+        ) : null}
         <div className={styles.spacer} />
       </div>
 

@@ -31,6 +31,7 @@ import { DRAFT_QUERY_SYSTEM, buildDraftPrompt, extractDraftedQuery } from './dra
 import { cacheKey, enabledSourceKeys, hashPassage, writeCache } from './cache';
 import type { CacheEntry } from './cache';
 import { deliverRanked, emptySignals, mergeRecords, resolveCacheHit } from './searchPipeline';
+import { abortRun, beginRun, endRun, isCurrent, onlyIfCurrent, wasAborted } from './searchRun';
 
 export interface UseLiteratureSearch {
   captureAndDraft: () => Promise<void>;
@@ -39,6 +40,13 @@ export interface UseLiteratureSearch {
   /** Restores a "recent searches" entry; the one place a cache hit — instant
    * if the passage still matches, a real re-rank if it doesn't — is wanted. */
   reuseSearch: (entry: CacheEntry) => Promise<void>;
+  /**
+   * Stops whichever of the three is in flight. Deliberately not an error: a
+   * user-initiated cancel returns the pane to `idle` silently, and leaves any
+   * results already on screen alone — cancelling a new search is a decision
+   * not to replace what is there, not a request to throw it away.
+   */
+  cancel: () => void;
   busy: boolean;
 }
 
@@ -47,14 +55,29 @@ export function useLiteratureSearch(): UseLiteratureSearch {
   const store = useLiteratureStore();
   const { setPassage, setDraft, setFromYear, setPhase, setError, setResults } = store;
 
-  /** Steps 1 and 2. Nothing here touches the network. */
+  /**
+   * Cancels the run in flight. Phase only — the results, passage and draft
+   * already on screen are the state the pane was in before the run started,
+   * and returning to that state is what "cancel" means.
+   */
+  const cancel = useCallback((): void => {
+    abortRun();
+    setPhase('idle');
+  }, [setPhase]);
+
+  /**
+   * Steps 1 and 2. Nothing here touches the network — but the local generation
+   * can still take a while on a large model, so it is cancellable too.
+   */
   const captureAndDraft = useCallback(async (): Promise<void> => {
     const { office, ollama } = getServices();
+    const controller = beginRun();
     setPhase('drafting');
     setError(null);
 
     try {
       const selection = await office.getSelection();
+      if (!isCurrent(controller)) return;
       const passage = selection.text.trim();
       if (selection.isEmpty || passage === '') {
         setError('Select the passage you want to find literature for, then try again.');
@@ -70,7 +93,6 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         return;
       }
 
-      const controller = new AbortController();
       const events = ollama.generate(
         {
           model,
@@ -93,16 +115,23 @@ export function useLiteratureSearch(): UseLiteratureSearch {
       for await (const event of events) {
         if (event.type === 'token') text += event.content;
       }
+      if (!isCurrent(controller)) return;
       // Deliberately NOT expanded here. The drafting prompt now quotes names
       // itself, and stacking every spelling on top made queries long enough to
       // match nothing against APIs that AND their terms. Expansion is offered
       // as an explicit action in the pane, for when a name is missed.
       setDraft(extractDraftedQuery(text));
       setPhase('ready');
-    } catch {
+    } catch (error) {
+      // A cancel is not a failure. `cancel()` has already put the pane back to
+      // idle, and blanking the draft the user just asked to stop writing would
+      // be a strange way to honour that.
+      if (wasAborted(error, controller)) return;
       // A failed draft is not a failed feature — typing a query still works.
       setDraft('');
       setPhase('ready');
+    } finally {
+      endRun(controller);
     }
   }, [settings, setPassage, setDraft, setPhase, setError]);
 
@@ -128,7 +157,11 @@ export function useLiteratureSearch(): UseLiteratureSearch {
      * rather than a constant because the right value depends on the field.
      */
     const perSource = settings.litResultsPerSource;
-    const controller = new AbortController();
+    const controller = beginRun();
+    // Every write from here on goes through this, not `setResults` directly:
+    // aborting the signal does not unwind the awaits already holding it, so a
+    // cancelled run keeps running to completion and would otherwise paint.
+    const deliver = onlyIfCurrent(controller, setResults);
 
     const enabledSources = enabledSourceKeys(
       settings.litSources as unknown as Record<string, boolean>,
@@ -203,7 +236,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
 
       const records = mergeRecords(withinRange);
       if (records.length === 0) {
-        setResults([], 'source-order', 0, null, sent);
+        deliver([], 'source-order', 0, null, sent);
         return;
       }
 
@@ -260,8 +293,11 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         ollama,
         settings,
         controller,
-        setResults,
+        deliver,
       );
+      // A cancelled search is not history: it never reached the screen, so it
+      // has no business appearing under "Recent searches" either.
+      if (!isCurrent(controller)) return;
       // Best-effort: a full localStorage must not fail a search that already
       // succeeded and is already on screen.
       await writeCache(cacheEntryKey, {
@@ -277,7 +313,13 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         passageHash: hashPassage(passage),
       }).catch(() => undefined);
     } catch (error) {
+      // Cancelling is a choice, not a fault. Rendering it as a red banner is
+      // the `setError(null)` class of bug in reverse: state the user caused,
+      // reported back to them as something that went wrong.
+      if (wasAborted(error, controller)) return;
       setError(error instanceof Error ? error.message : 'The search could not be completed.');
+    } finally {
+      endRun(controller);
     }
   }, [settings, setPhase, setError, setResults]);
 
@@ -289,12 +331,25 @@ export function useLiteratureSearch(): UseLiteratureSearch {
       setPhase('searching');
       setError(null);
 
-      const controller = new AbortController();
+      // Cancellable for the same reason as `search`: a stored entry whose
+      // passage has changed re-ranks, which embeds, which is a real wait.
+      const controller = beginRun();
       try {
         const { passage } = useLiteratureStore.getState();
-        await resolveCacheHit(entry.key, entry, passage, ollama, settings, controller, setResults);
+        await resolveCacheHit(
+          entry.key,
+          entry,
+          passage,
+          ollama,
+          settings,
+          controller,
+          onlyIfCurrent(controller, setResults),
+        );
       } catch (error) {
+        if (wasAborted(error, controller)) return;
         setError(error instanceof Error ? error.message : 'The search could not be completed.');
+      } finally {
+        endRun(controller);
       }
     },
     [settings, setDraft, setFromYear, setPhase, setError, setResults],
@@ -304,6 +359,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
     captureAndDraft,
     search,
     reuseSearch,
+    cancel,
     busy: store.phase === 'drafting' || store.phase === 'searching',
   };
 }
