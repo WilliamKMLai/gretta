@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type {
   CollectionStatus,
   KnowledgeBaseHealth,
+  PickFolderResult,
   RetrievedChunk,
 } from '../../types/knowledgebase';
 
@@ -27,7 +28,23 @@ const HealthSchema = z.object({
   ok: z.boolean(),
   // Optional: an older companion will not report where its index lives.
   dataDir: z.string().optional(),
+  // Optional for the same reason, and absent reads as "no dialog" (ADR-033).
+  pickFolder: z.boolean().optional(),
 });
+
+/**
+ * A discriminated union rather than one object with optional fields, so an
+ * `ok: false` payload cannot carry a `path` and a success cannot omit one
+ * (ADR-033). `message` is only ever attached to a real failure.
+ */
+const PickFolderSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), path: z.string().min(1) }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.enum(['cancelled', 'unsupported', 'busy', 'failed']),
+    message: z.string().optional(),
+  }),
+]) satisfies z.ZodType<PickFolderResult>;
 
 const CollectionSchema = z.object({
   id: z.string(),
@@ -73,6 +90,10 @@ export function parseCollections(json: unknown): CollectionStatus[] {
 
 export function parseCollection(json: unknown): CollectionStatus {
   return CollectionSchema.parse(json);
+}
+
+export function parsePickFolder(json: unknown): PickFolderResult {
+  return PickFolderSchema.parse(json);
 }
 
 export function parseQuery(json: unknown): RetrievedChunk[] {

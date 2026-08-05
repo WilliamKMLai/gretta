@@ -51,11 +51,17 @@ That single property covers both patterns you're likely to want:
    or use the **Knowledge base** switch in Settings, which is also how you turn it back
    off.
 
-4. **Create a collection.** Give it a name, paste the **absolute path** to a folder, and
-   click **Add**. Indexing starts immediately and the panel shows progress.
+4. **Create a collection.** Give it a name, then either click **Choose folder…** or paste
+   the **absolute path** to a folder, and click **Add**. Indexing starts immediately and
+   the panel shows progress.
 
-   > Word add-ins can't open a native folder picker, so the path is typed or pasted. The
-   > companion — not the pane — is what reads your disk.
+   > **Choose folder…** opens a normal macOS or Windows folder dialog. The pane itself
+   > can't open one — Word add-ins have no such API — so the button asks the **companion**
+   > to open it, which is also the process that reads your disk. The button only appears
+   > when the companion is running on a platform that has a dialog; on Linux, or with the
+   > companion stopped, type or paste the path instead. Nothing on the companion lists or
+   > browses your filesystem over HTTP: the dialog hands back exactly the one folder you
+   > picked (ADR-033).
 
 5. **Bind the open document.** Tick the collections this document should use. Generate as
    usual; relevant excerpts are added to the prompt and listed under **Sources**.
@@ -130,8 +136,10 @@ approach it, split the corpus into more specific collections, which also improve
 ## Editing a collection
 
 The pencil icon on a collection lets you change its **name**, its **folders** (one absolute
-path per line — a collection can span several), and its **embedding model**. Saving
-re-indexes incrementally, so only what actually changed is re-read.
+path per line — a collection can span several), and its **embedding model**. **Choose
+folder…** appends a folder to the list rather than replacing it, since a collection
+spanning two folders is ordinary; the list stays editable either way. Saving re-indexes
+incrementally, so only what actually changed is re-read.
 
 Renaming is safe: the collection keeps its internal id, so documents already bound to it
 stay bound.
@@ -214,3 +222,9 @@ The companion listens on loopback only. Folder paths, file contents, and embeddi
 leave your computer, and the only thing stored in your document is the list of collection
 ids it's bound to. Retrieved text is treated exactly like model output — data, never
 instructions.
+
+The companion reads only the folders you have explicitly bound to a collection. There is no
+endpoint that lists or browses your filesystem, and **Choose folder…** does not add one: it
+opens a native dialog and returns the single folder you selected, nothing else. This was a
+deliberate choice over a browsable folder picker, which would have worked on Linux too but
+would have let anything reaching loopback walk your disk (ADR-033).

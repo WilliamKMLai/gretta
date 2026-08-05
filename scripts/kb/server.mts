@@ -26,6 +26,7 @@
  *   POST   /collections/:id/reindex        { full?: boolean }
  *   GET    /collections/:id/status/stream  NDJSON progress
  *   POST   /query                          { query, collectionIds[], k? }
+ *   POST   /pick-folder                    native folder dialog (ADR-033)
  *
  * Usage: `pnpm kb` (https://localhost:11436) — see docs/KNOWLEDGE-BASE.md.
  */
@@ -40,6 +41,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 import type { CollectionConfig, QueryDefaults } from '../../src/types/knowledgebase';
+import { applyCors, readJsonBody, sendJson } from './http.mts';
+import { isPickFolderSupported, pickFolder } from './pick-folder.mts';
 import { encodeProgress } from './progress.mts';
 import { CollectionRegistry } from './registry.mts';
 import { SqliteStore } from './store.sqlite.mts';
@@ -107,33 +110,6 @@ async function loadTlsOptions(): Promise<{ cert: Buffer | string; key: Buffer | 
 const store = new SqliteStore(provisionDataDir());
 const registry = new CollectionRegistry(store, defaults, OLLAMA_URL);
 
-/** Loopback-only permissive CORS: reflect a localhost origin, else allow all. */
-function applyCors(req: IncomingMessage, res: ServerResponse): void {
-  const origin = req.headers.origin;
-  const allow =
-    origin !== undefined && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/u.test(origin);
-  res.setHeader('Access-Control-Allow-Origin', allow ? origin : '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new Error('request body too large');
-    chunks.push(chunk as Buffer);
-  }
-  const text = Buffer.concat(chunks).toString('utf8');
-  return text === '' ? {} : JSON.parse(text);
-}
-
 /** Streams a collection's NDJSON progress until the client disconnects. */
 function streamStatus(id: string, res: ServerResponse): void {
   const indexer = registry.get(id);
@@ -188,7 +164,16 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // It sits in the user's home directory, not the repository, which means
     // deleting and reinstalling the project leaves every collection intact —
     // surprising enough that it should be visible rather than discovered.
-    sendJson(res, 200, { name: 'gretta-kb', version: VERSION, ok: true, dataDir: DATA_DIR });
+    sendJson(res, 200, {
+      name: 'gretta-kb',
+      version: VERSION,
+      ok: true,
+      dataDir: DATA_DIR,
+      // Advertised, not discovered: the pane decides whether to render the
+      // button before anyone clicks it, and a button that opens nothing is
+      // worse than no button (ADR-033).
+      pickFolder: isPickFolderSupported(),
+    });
     return;
   }
   if (method === 'GET' && path === '/collections') {
@@ -196,7 +181,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
   if (method === 'POST' && path === '/collections') {
-    const config = parseConfig(await readJsonBody(req));
+    const config = parseConfig(await readJsonBody(req, MAX_BODY_BYTES));
     if (typeof config === 'string') {
       sendJson(res, 400, { error: config });
       return;
@@ -217,7 +202,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       sendJson(res, 404, { error: 'no such collection' });
       return;
     }
-    const body = (await readJsonBody(req)) as { full?: unknown };
+    const body = (await readJsonBody(req, MAX_BODY_BYTES)) as { full?: unknown };
     void indexer.reindex(body.full === true);
     sendJson(res, 202, indexer.status());
     return;
@@ -233,8 +218,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     sendJson(res, ok ? 200 : 404, ok ? { deleted: true } : { error: 'no such collection' });
     return;
   }
+  if (method === 'POST' && path === '/pick-folder') {
+    /*
+     * No body is read, deliberately (ADR-033). There is no parameter, so there
+     * is nothing a caller could inject into the AppleScript or PowerShell that
+     * `pick-folder.mts` runs. Always 200: a cancelled dialog and an
+     * unsupported platform are outcomes, not failures.
+     */
+    sendJson(res, 200, await pickFolder());
+    return;
+  }
   if (method === 'POST' && path === '/query') {
-    const body = (await readJsonBody(req)) as {
+    const body = (await readJsonBody(req, MAX_BODY_BYTES)) as {
       query?: unknown;
       collectionIds?: unknown;
       k?: unknown;

@@ -21,10 +21,12 @@ import {
 } from '@fluentui/react-components';
 import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons';
 import type { CollectionConfig, CollectionStatus } from '../../../types/knowledgebase';
+import { FolderPickerButton } from './FolderPickerButton';
 
 const useStyles = makeStyles({
   form: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   actions: { display: 'flex', gap: tokens.spacingHorizontalS, justifyContent: 'flex-end' },
+  pick: { display: 'flex' },
 });
 
 export interface CollectionEditorProps {
@@ -72,6 +74,24 @@ export function CollectionEditor({
           }}
         />
       </Field>
+      {/*
+       * Appends rather than replaces: this field is a list, and a collection
+       * spanning two folders is ordinary. The textarea stays editable — a
+       * network volume may not be reachable from the dialog, and the picker is
+       * absent on Linux entirely (ADR-033).
+       */}
+      <div className={styles.pick}>
+        <FolderPickerButton
+          onPicked={(path) => {
+            setFolders((current) => {
+              const lines = current.split('\n').map((line) => line.trim());
+              return lines.includes(path)
+                ? current
+                : [...lines.filter((line) => line !== ''), path].join('\n');
+            });
+          }}
+        />
+      </div>
       <Field label="Embedding model">
         <Select
           value={model}

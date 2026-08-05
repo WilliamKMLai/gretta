@@ -14,6 +14,7 @@ import type {
   CollectionConfig,
   CollectionStatus,
   KnowledgeBaseHealth,
+  PickFolderResult,
   RetrievedChunk,
 } from '../../types/knowledgebase';
 
@@ -39,6 +40,17 @@ export interface KnowledgeBaseClient {
    * vectors first; the default incremental pass only touches changed files.
    */
   reindexCollection(id: string, full: boolean, signal?: AbortSignal): Promise<CollectionStatus>;
+
+  /**
+   * `POST /pick-folder` — opens a native folder dialog on the companion's
+   * machine and resolves with what the user did (ADR-033).
+   *
+   * The pane cannot open one itself: Office.js has no directory picker and
+   * `showDirectoryPicker()` is absent under WKWebView. Render the button only
+   * when `health().pickFolder` is true; a cancelled dialog is an outcome, not
+   * an error, and must leave the path input untouched.
+   */
+  pickFolder(signal?: AbortSignal): Promise<PickFolderResult>;
 
   /**
    * `POST /query` — top-k relevant chunks across the given collections. Returns

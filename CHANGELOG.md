@@ -7,6 +7,15 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- A **Choose folder…** button when creating or editing a knowledge-base collection, so a
+  folder no longer has to be typed or pasted as an absolute path — the single biggest
+  day-one friction point (ADR-033). The pane cannot open a folder dialog (Word add-ins have
+  no such API, and the browser one does not exist under WKWebView on macOS), so the button
+  asks the companion — the process that reads your disk anyway — to open a normal macOS or
+  Windows dialog. It appears only when the companion is running on a platform that has one;
+  everywhere else the text input works exactly as before, and it stays editable in all
+  cases. Cancelling leaves the field untouched. Nothing enumerates your filesystem over
+  HTTP: the dialog returns exactly the one folder you picked.
 - Literature sources are now queried in parallel rather than one after another, so a search
   takes about as long as the slowest source instead of the sum of all four (ADR-032). A
   source that fails no longer discards the results from the ones that succeeded: the pane

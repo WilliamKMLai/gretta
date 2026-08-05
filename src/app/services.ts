@@ -96,6 +96,7 @@ export function createSettingsBoundKbClient(
     upsertCollection: (config, signal) => client().upsertCollection(config, signal),
     deleteCollection: (id, signal) => client().deleteCollection(id, signal),
     reindexCollection: (id, full, signal) => client().reindexCollection(id, full, signal),
+    pickFolder: (signal) => client().pickFolder(signal),
     query: (query, ids, k, signal) => client().query(query, ids, k, signal),
   };
 }

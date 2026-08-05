@@ -38,6 +38,7 @@ import { describeFolderProblem, filterEmbeddingModels } from '../embeddingModels
 import { useSettingsStore } from '../../settings';
 import { useDocumentBinding } from '../useDocumentBinding';
 import { CollectionCard } from './CollectionCard';
+import { FolderPickerButton } from './FolderPickerButton';
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
@@ -251,7 +252,7 @@ export function KnowledgeBasePanel(): ReactElement {
         <Field
           label="Folder"
           required
-          hint="Word add-ins cannot open a folder picker, so paste the full path."
+          hint="Choose one below, or paste the full path — the pane itself cannot open a picker, so the button asks the companion to."
           validationState={folderProblem === null ? 'none' : 'warning'}
           validationMessage={folderProblem}
         >
@@ -264,6 +265,7 @@ export function KnowledgeBasePanel(): ReactElement {
           />
         </Field>
         <div className={styles.addRow}>
+          <FolderPickerButton onPicked={setFolder} disabled={busy} />
           <Button
             appearance="primary"
             icon={<AddRegular />}

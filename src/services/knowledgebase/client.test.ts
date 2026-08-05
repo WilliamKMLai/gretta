@@ -74,6 +74,52 @@ describe('createKnowledgeBaseClient', () => {
     });
   });
 
+  it('reads the folder-picker capability off health, defaulting to absent', async () => {
+    const withPicker = vi.fn<HttpTransport>(() =>
+      Promise.resolve(json({ name: 'gretta-kb', version: '1.0.0', ok: true, pickFolder: true })),
+    );
+    await expect(client(withPicker).health()).resolves.toMatchObject({ pickFolder: true });
+
+    // An older companion does not send the field; absent must read as "no
+    // dialog" rather than failing to parse (ADR-033).
+    const older = vi.fn<HttpTransport>(() =>
+      Promise.resolve(json({ name: 'gretta-kb', version: '1.0.0', ok: true })),
+    );
+    await expect(client(older).health()).resolves.not.toHaveProperty('pickFolder');
+  });
+
+  it('POSTs to /pick-folder with no body at all', async () => {
+    // No body is the injection defence, not merely an omission: there is no
+    // parameter for a caller to smuggle into the script the companion runs.
+    const transport = vi.fn<HttpTransport>(() =>
+      Promise.resolve(json({ ok: true, path: '/Users/you/Documents/References' })),
+    );
+    await expect(client(transport).pickFolder()).resolves.toEqual({
+      ok: true,
+      path: '/Users/you/Documents/References',
+    });
+
+    const [url, init] = transport.mock.calls[0] ?? [];
+    expect(url).toBe('https://localhost:11436/pick-folder');
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBeNull();
+  });
+
+  it.each(['cancelled', 'unsupported', 'busy'] as const)(
+    'parses %s as an ordinary outcome, not an error',
+    async (reason) => {
+      const transport = vi.fn<HttpTransport>(() => Promise.resolve(json({ ok: false, reason })));
+      await expect(client(transport).pickFolder()).resolves.toEqual({ ok: false, reason });
+    },
+  );
+
+  it('rejects a picker payload that claims success without a path', async () => {
+    // The discriminated union is what stops an empty path reaching the folder
+    // list, where it would bind the whole filesystem.
+    const transport = vi.fn<HttpTransport>(() => Promise.resolve(json({ ok: true, path: '' })));
+    await expect(client(transport).pickFolder()).rejects.toBeInstanceOf(KbError);
+  });
+
   it('short-circuits a query with no bound collections (no request at all)', async () => {
     const transport = vi.fn<HttpTransport>(() => Promise.resolve(json({ chunks: [] })));
     await expect(client(transport).query('why', [], undefined)).resolves.toEqual([]);

@@ -83,5 +83,10 @@ Recorded so the scope question stops recurring.
 - **Syncing the knowledge-base index between machines.** ADR-024: the index is derived data
   tied to absolute paths, and a live SQLite file in a sync folder corrupts. Collections match
   by name instead — sync the source folder, not the index.
+- **A browsable folder picker in the pane.** ADR-033: Office.js has no directory API and
+  `showDirectoryPicker()` is absent under WKWebView, so the companion opens a native OS
+  dialog instead — macOS and Windows only. A cross-platform in-pane browser would need an
+  HTTP endpoint that enumerates the filesystem, which is a trust surface not worth adding;
+  on Linux the path is typed, as it always was.
 - **Bundling a model.** Users choose and manage their own through Ollama.
 - **Telemetry.** No usage reporting, ever.

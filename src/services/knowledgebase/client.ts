@@ -12,6 +12,7 @@ import type {
   CollectionConfig,
   CollectionStatus,
   KnowledgeBaseHealth,
+  PickFolderResult,
   RetrievedChunk,
 } from '../../types/knowledgebase';
 import { joinUrl } from '../../utils/url';
@@ -20,12 +21,21 @@ import {
   parseCollection,
   parseCollections,
   parseHealth,
+  parsePickFolder,
   parseQuery,
   tryParseErrorBody,
 } from './schemas';
 
 /** The companion is local: it answers fast or it is not running. */
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * The one route that is allowed to be slow, because it is waiting on a person
+ * browsing a native dialog rather than on the companion (ADR-033). Slightly
+ * over the companion's own two-minute cap on the dialog, so the timeout that
+ * fires is the one that can clean up the child process.
+ */
+const PICK_FOLDER_TIMEOUT_MS = 130_000;
 
 const defaultTransport: HttpTransport = (url, init) => fetch(url, init);
 
@@ -36,7 +46,7 @@ export function createKnowledgeBaseClient(config: KnowledgeBaseClientConfig): Kn
 
   async function request(
     path: string,
-    init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown },
+    init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown; timeoutMs?: number },
     signal?: AbortSignal,
   ): Promise<unknown> {
     const controller = new AbortController();
@@ -47,7 +57,7 @@ export function createKnowledgeBaseClient(config: KnowledgeBaseClientConfig): Kn
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
     }
-    const timer = setTimeout(onAbort, timeoutMs);
+    const timer = setTimeout(onAbort, init.timeoutMs ?? timeoutMs);
 
     let response: Response;
     try {
@@ -133,6 +143,22 @@ export function createKnowledgeBaseClient(config: KnowledgeBaseClientConfig): Kn
         signal,
       );
       return validated(() => parseCollection(json));
+    },
+
+    async pickFolder(signal?: AbortSignal): Promise<PickFolderResult> {
+      /*
+       * No body, deliberately: there is no parameter, so there is nothing a
+       * caller could inject into the script the companion runs (ADR-033). The
+       * default 10s timeout would fire long before a human finishes browsing,
+       * so this request opts out of it — the companion enforces its own
+       * two-minute bound on the dialog instead.
+       */
+      const json = await request(
+        '/pick-folder',
+        { method: 'POST', timeoutMs: PICK_FOLDER_TIMEOUT_MS },
+        signal,
+      );
+      return validated(() => parsePickFolder(json));
     },
 
     async query(

@@ -39,6 +39,7 @@ const stubKb = (overrides: Partial<KnowledgeBaseClient> = {}): KnowledgeBaseClie
   upsertCollection: () => Promise.resolve(collection),
   deleteCollection: () => Promise.resolve(),
   reindexCollection: () => Promise.resolve(collection),
+  pickFolder: () => Promise.resolve({ ok: false, reason: 'unsupported' as const }),
   query: () => Promise.resolve([]),
   ...overrides,
 });

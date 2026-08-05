@@ -125,7 +125,34 @@ export interface KnowledgeBaseHealth {
    * Optional because an older companion will not send it.
    */
   dataDir?: string | undefined;
+  /**
+   * Whether this companion can open a native folder dialog (ADR-033).
+   *
+   * Advertised rather than discovered by calling `/pick-folder` and seeing what
+   * happens: the pane has to decide whether to render the button *before*
+   * anyone clicks it, and a button that opens nothing is worse than no button.
+   * Optional, and absent reads as false — an older companion has no dialog.
+   */
+  pickFolder?: boolean | undefined;
 }
+
+/**
+ * Outcome of `POST /pick-folder` (ADR-033).
+ *
+ * `cancelled` is deliberately not an error: dismissing a dialog is a normal
+ * thing to do, and it must leave the path input exactly as it was with no
+ * banner. `unsupported` covers every platform without a native dialog (Linux,
+ * WSL) where the text input remains the only way in; `busy` means one dialog is
+ * already open, which is refused rather than served because two native modal
+ * windows on one desktop session is a state with no good exit.
+ */
+export type PickFolderResult =
+  | { ok: true; path: string }
+  | {
+      ok: false;
+      reason: 'cancelled' | 'unsupported' | 'busy' | 'failed';
+      message?: string | undefined;
+    };
 
 /** Global query-time defaults on the companion (not per collection). */
 export interface QueryDefaults {

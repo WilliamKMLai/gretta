@@ -2402,3 +2402,75 @@ gains a state it did not have — results plus a warning — and every place tha
 tolerate it. Result ordering is unchanged by construction, which is the property to hold hardest:
 retrieval order drives which papers a user reads, and this change must not be allowed to alter it as
 a side effect of going faster.
+
+---
+
+## ADR-033 — The companion opens the folder dialog, and nothing enumerates the filesystem
+
+**Status:** Accepted (2026-08-05)
+
+**Context.** ADR-020 shipped folder binding as a typed absolute path and flagged it as needing "a
+better picker/trust UX." For the audience this is built for — academics with a references folder
+somewhere in Documents or on a network share — it is the single biggest day-one friction point. The
+pane asks for `/Users/you/Documents/References` and offers no way to find it.
+
+**A pane-side picker is not possible.** Recording this explicitly so the question stops being
+reopened:
+
+- Office.js has no directory-picker API. It has file pickers for Office documents, not folders, and
+  not for arbitrary local paths.
+- `showDirectoryPicker()` is Chromium-only. Word on macOS runs WKWebView, so it is simply absent for
+  a large share of the audience — and the macOS share is exactly the one that has been driving this
+  project's bug reports.
+- Even where it exists, it returns a `FileSystemDirectoryHandle`, not a path. The consumer here is
+  the companion: a separate Node process that needs a real absolute path to `readdir`. Handles are
+  scoped to the browsing context and do not cross that boundary.
+
+The companion can solve it, because it is a local process with ordinary filesystem access and a
+desktop session to draw a window into.
+
+**Decision.**
+
+_A companion-invoked native OS dialog,_ behind `POST /pick-folder`. macOS uses `osascript` with
+`choose folder`; Windows uses PowerShell with `System.Windows.Forms.FolderBrowserDialog`. Every other
+platform answers `unsupported` and the pane keeps the text input it has always had.
+
+_Rejected: a `GET /browse?path=…` enumeration endpoint_ plus an in-pane folder browser. It works on
+every platform, including the Linux and WSL cases the dialog does not cover, and it would be more
+testable. It is rejected because it adds an HTTP endpoint that enumerates the user's filesystem on
+request — a capability ADR-020's threat model does not cover and did not have to. The companion
+currently reads only paths the user has explicitly bound; a browse endpoint would let anything that
+can reach loopback walk the disk. The dialog returns exactly one path, only after a human clicked a
+button in a native window, and enumerates nothing. That asymmetry is worth losing Linux support over.
+
+_Nothing from the request reaches a command line._ The endpoint takes **no body at all** — there is
+no parameter to inject. `execFile` is used with an argument array, never `exec` with an interpolated
+string, and the prompt text is a module constant in `pick-folder.mts`. Both invariants are asserted
+in tests rather than left to review, because this is the one place in the project that spawns a
+process.
+
+_Four outcomes, and a cancel is not an error._ `{ ok: true, path }`;
+`{ ok: false, reason: 'cancelled' }` when the user dismissed the dialog; `'unsupported'` on a
+platform without one; `'busy'` when a dialog is already open. Clicking Cancel is a normal thing to
+do and must leave the input untouched with no error banner — the same principle as ADR-032's
+treatment of a cancelled search.
+
+_Serialized, and timed out at two minutes._ A second concurrent request is refused rather than
+opening a second dialog, because two native modal windows fighting over one desktop session is a
+state with no good exit. The timeout exists so a dialog someone opened and forgot cannot wedge a
+companion request indefinitely; `execFile`'s own `timeout` kills the child.
+
+_Support is advertised on `/health`,_ as `pickFolder: boolean`, rather than discovered by calling the
+endpoint and seeing what happens. The pane must decide whether to render a button _before_ anyone
+clicks it, and a button that opens nothing is worse than no button. The field is optional in the
+schema so an older companion still parses, and absent reads as false.
+
+**Consequences.** The companion gains its first ability to draw UI, which is a genuine expansion of
+what it is — until now it was a headless indexer. That is the cost of the friction it removes. The
+text input stays editable in every case: a network volume may not be reachable from the dialog, some
+users will paste a path, and the picker is unavailable on Linux entirely, so it is an accelerator and
+never the only way in.
+
+The dialog itself cannot be unit-tested — it is a modal window awaiting a human. Everything around
+it (platform dispatch, outcome mapping, the argument array, the concurrency guard) is tested with
+`execFile` mocked, and the dialog is verified by hand on each platform.
