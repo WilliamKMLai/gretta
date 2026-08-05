@@ -887,6 +887,19 @@ made here. `KB_MAX_CHUNKS` is unchanged by this amendment.
 `chunkVectors` + `topKPacked` path specifically, rather than to the module in general —
 `allChunks` remains the slower, unoptimized shape it always was.
 
+**Amendment (2026-08-04) — the capacity ceiling is surfaced, not enforced.** `KB_MAX_CHUNKS`
+existed only inside `capacityPct()`'s arithmetic and a progress bar — nothing read it as a
+limit, so a collection well past it rendered an honest-looking percentage over 100% with no
+explanation, and its query latency degraded silently. `CollectionStatus` gains
+`overCapacity` (`chunkCount > maxChunks`), computed alongside `capacityPct` in
+`CollectionIndexer.status()` and surfaced in `CollectionCard` as a warning `MessageBar` once
+a collection crosses the ceiling, naming the fix (split it into topic-scoped collections).
+Indexing itself is deliberately never truncated to stay under the ceiling: a silently
+dropped source would break the provenance guarantee this feature exists to keep — a
+retrieved excerpt is either indexed and citable, or it was never indexed at all, never
+quietly omitted past some limit. A user who indexes a large folder gets a working, slower
+knowledge base and an honest warning, not a partially-built one.
+
 ## ADR-021 — Generation history replaces the multi-conversation model
 
 **Status:** Accepted (Phase 12, 2026-07-23)

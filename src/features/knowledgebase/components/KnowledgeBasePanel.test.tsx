@@ -27,6 +27,7 @@ const collection: CollectionStatus = {
   chunkCount: 300,
   maxChunks: 30_000,
   capacityPct: 1,
+  overCapacity: false,
   skipped: [],
   lastIndexedAt: '2026-07-22T00:00:00.000Z',
   message: null,

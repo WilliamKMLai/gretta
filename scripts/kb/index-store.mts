@@ -102,6 +102,7 @@ export class CollectionIndexer {
       chunkCount,
       maxChunks: KB_MAX_CHUNKS,
       capacityPct: capacityPct(chunkCount),
+      overCapacity: chunkCount > KB_MAX_CHUNKS,
       skipped: [...this.skipped],
       lastIndexedAt: row?.lastIndexedAt ?? null,
       message: this.message,

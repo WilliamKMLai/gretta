@@ -39,6 +39,7 @@ const CollectionSchema = z.object({
   chunkCount: z.number(),
   maxChunks: z.number(),
   capacityPct: z.number(),
+  overCapacity: z.boolean(),
   skipped: z.array(z.object({ path: z.string(), reason: z.string() })),
   lastIndexedAt: z.string().nullable(),
   message: z.string().nullable(),

@@ -20,6 +20,7 @@ const collection = {
   chunkCount: 40,
   maxChunks: 30_000,
   capacityPct: 0,
+  overCapacity: false,
   skipped: [],
   lastIndexedAt: '2026-01-01T00:00:00.000Z',
   message: null,

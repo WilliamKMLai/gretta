@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CollectionConfig, QueryDefaults } from '../../src/types/knowledgebase';
-import { CollectionIndexer } from './index-store.mts';
+import { CollectionIndexer, KB_MAX_CHUNKS, capacityPct } from './index-store.mts';
 import type { ChunkRow, SqliteStore } from './store.sqlite.mts';
 
 /**
@@ -195,5 +195,53 @@ describe('CollectionIndexer query-matrix caching', () => {
     const [first, second] = results;
     if (first === undefined || second === undefined) throw new Error('expected two results');
     expect(first.score).toBeGreaterThanOrEqual(second.score);
+  });
+});
+
+describe('capacityPct and overCapacity', () => {
+  it.each([
+    [0, 0],
+    [KB_MAX_CHUNKS - 1, 100], // rounds up: 29,999 / 30,000 ≈ 99.997%
+    [KB_MAX_CHUNKS, 100],
+    [KB_MAX_CHUNKS + 1, 100],
+  ])('capacityPct(%i) is %i%%', (chunkCount, expected) => {
+    expect(capacityPct(chunkCount)).toBe(expected);
+  });
+
+  it.each([
+    [0, false],
+    [KB_MAX_CHUNKS - 1, false],
+    [KB_MAX_CHUNKS, false],
+    [KB_MAX_CHUNKS + 1, true],
+  ])('status().overCapacity for %i chunks is %s', (chunkCount, expected) => {
+    const store = createFakeStore();
+    store.counts.mockReturnValue({ fileCount: 1, chunkCount });
+    const indexer = new CollectionIndexer(config(), asStore(store), DEFAULTS, 'http://x');
+    expect(indexer.status().overCapacity).toBe(expected);
+  });
+
+  it('the rounded percentage cannot distinguish just-under from just-over the ceiling — overCapacity can', () => {
+    expect(capacityPct(KB_MAX_CHUNKS - 1)).toBe(capacityPct(KB_MAX_CHUNKS + 1));
+
+    const under = createFakeStore();
+    under.counts.mockReturnValue({ fileCount: 1, chunkCount: KB_MAX_CHUNKS - 1 });
+    expect(
+      new CollectionIndexer(config(), asStore(under), DEFAULTS, 'http://x').status().overCapacity,
+    ).toBe(false);
+
+    const over = createFakeStore();
+    over.counts.mockReturnValue({ fileCount: 1, chunkCount: KB_MAX_CHUNKS + 1 });
+    expect(
+      new CollectionIndexer(config(), asStore(over), DEFAULTS, 'http://x').status().overCapacity,
+    ).toBe(true);
+  });
+
+  it('indexing is never truncated at the ceiling — status just reports it honestly', () => {
+    const store = createFakeStore();
+    store.counts.mockReturnValue({ fileCount: 10, chunkCount: KB_MAX_CHUNKS * 3 });
+    const indexer = new CollectionIndexer(config(), asStore(store), DEFAULTS, 'http://x');
+    const status = indexer.status();
+    expect(status.chunkCount).toBe(KB_MAX_CHUNKS * 3);
+    expect(status.overCapacity).toBe(true);
   });
 });

@@ -92,6 +92,12 @@ export interface CollectionStatus {
   maxChunks: number;
   /** `chunkCount / maxChunks` as a 0..100 percentage the UI surfaces. */
   capacityPct: number;
+  /**
+   * `chunkCount > maxChunks`. Advisory, not enforced — indexing is never
+   * truncated to stay under the ceiling (ADR-020), so the UI surfaces this
+   * rather than the companion silently degrading or dropping sources.
+   */
+  overCapacity: boolean;
   /** Files skipped (unsupported format / parse failure) with reasons. */
   skipped: { path: string; reason: string }[];
   /** ISO timestamp of the last completed index, or null. */

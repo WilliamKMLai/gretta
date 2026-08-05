@@ -25,6 +25,10 @@ All notable changes to this project are documented here. Format loosely follows
 - A result's raw citation count (from OpenAlex, when available) is now shown as its own
   bolded, brand-colored line rather than sitting among the credibility badges, where it read
   as just another grey pill.
+- A knowledge-base collection past the 30,000-excerpt fast-search ceiling now shows a
+  warning explaining that retrieval will be slower and suggesting a split by topic (ADR-020),
+  instead of silently degrading with no explanation. The ceiling is still advisory — indexing
+  is never truncated, so nothing is silently left out of a collection's provenance.
 
 ### Fixed
 

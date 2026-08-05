@@ -25,6 +25,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  MessageBar,
+  MessageBarBody,
   ProgressBar,
   Text,
   Tooltip,
@@ -159,6 +161,14 @@ export function CollectionCard({
             {describePhase(collection)}
           </Text>
           <ProgressBar value={capacity / 100} aria-label={`${collection.name} capacity used`} />
+          {collection.overCapacity ? (
+            <MessageBar intent="warning">
+              <MessageBarBody>
+                This collection is past the size the fast index is tuned for — retrieval will be
+                slower. Splitting it into two collections by topic will help.
+              </MessageBarBody>
+            </MessageBar>
+          ) : null}
           <div className={styles.stats}>
             <Text size={200}>{collection.fileCount.toLocaleString()} files</Text>
             <Text size={200}>·</Text>
