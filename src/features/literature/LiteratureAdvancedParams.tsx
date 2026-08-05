@@ -115,7 +115,7 @@ export function LiteratureAdvancedParams(): ReactElement {
 
             <Field
               label="Citation impact weight"
-              hint="How much a result's citation impact for its year (OpenAlex) can nudge it up the ranking. 0 turns the nudge off — pure relevance, as before. It only breaks close calls: a clearly more relevant result still wins regardless of this value. Provisional — chosen without real result sets behind it, so tune it rather than trust it."
+              hint="How much a result's citation count (OpenAlex, log-scaled so ten citations count for far more than the step from 200 to 400) moves it up the ranking. 0 turns it off — pure relevance. Below about 0.3 it only breaks close calls; at the 0.6 default a well-cited paper can overtake a noticeably more relevant one, which is usually what you want when searching for a specific method or tool by name."
             >
               <SpinButton
                 min={0}

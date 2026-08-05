@@ -28,7 +28,10 @@ export const STORAGE_VERSIONS: Record<StorageKey, number> = {
   // v3: kbDefaultEmbeddingModel → defaultEmbeddingModel, since ADR-030 makes it
   // serve literature re-ranking as well as the knowledge base.
   // v4: add litCitationImpactWeight (ADR-029's citation-impact-ranking amendment).
-  'gretta/settings': 4,
+  // v5: rescale litCitationImpactWeight — it now weights a log-scaled raw
+  // citation count rather than a frequently-null percentile (ADR-029, fifth
+  // amendment), so the old default no longer means the same thing.
+  'gretta/settings': 5,
   // v2: conversation threads → flat generation records (ADR-021).
   'gretta/history': 2,
   'gretta/prompts': 1,

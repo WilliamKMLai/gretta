@@ -1964,6 +1964,104 @@ genuinely different DOI-less records don't collapse into one. This is unrelated 
 fixes above but was found by the same report and fixed in the same pass, so it is recorded here rather
 than invent a separate section for two lines of context.
 
+**Amended a fifth time (the percentile was the wrong measure all along).** User-reported, a third
+time on the same class of failure: searching BoltzGen, the 2025 bioRxiv preprint carrying **59
+citations** ranked 10th, while a 2026 Figshare deposit with **zero** citations ranked 4th. The three
+amendments above had each tuned something around the edge of a signal that was not firing at all.
+
+The mechanism: `citationImpact()` returned `citedByPercentileYear / 100`, and **returned 0 when that
+percentile was null** — which it very often is. OpenAlex populates `cited_by_percentile_year` from a
+same-year cohort computation that is simply absent for a large share of preprints and recent
+deposits. So the 59-citation preprint scored 0 impact, the 0-citation deposit scored 0 impact, the
+boost cancelled out, and ranking fell back to pure cosine similarity — which is exactly the state
+this whole amendment chain was written to move away from. Every previous fix was tuning the weight
+on a term that evaluated to zero.
+
+The percentile is now dropped from ranking entirely. Three reasons, in order of weight:
+
+1. **It is absent precisely where it is needed.** Preprints and recent work are the results a
+   researcher is most likely to be checking against, and they are the population OpenAlex is least
+   likely to have percentiled.
+2. **It has already produced one confirmed defect** (the third amendment above), because a
+   percentile computed over a cohort that is mostly ties at zero is not a statement about impact.
+3. **A null it cannot distinguish from a real zero** is a signal that fails silently, and this ADR's
+   own rule elsewhere is that "not checked" must never be rendered as "absent".
+
+`citationImpact()` now derives from the **raw `citedByCount`, log-scaled**:
+`log10(1 + count) / log10(1 + SATURATION)`, clamped to 1, with `SATURATION = 200`. Log scaling is
+what makes a raw count usable despite the age bias that was the original reason for avoiding it: the
+curve is steep where the evidence is (0 → 10 citations is most of the available signal) and nearly
+flat where age dominates (a 500-citation 2015 paper scores 1.0 against a 59-citation 2025 preprint's
+0.77 — a 0.23 separation, not the 8× the raw counts would imply). Zero citations still scores
+exactly 0, unconditionally, preserving the third amendment's rule.
+
+The default weight rises **0.25 → 0.6**, and this is the substantive behavioural change rather than
+a tuning nudge: at 0.6 a well-cited result can close a 0.46 relevance gap, which on real cosine
+distributions is enough to move a paper from the bottom of a twenty-result list to the top. That is
+deliberate and was explicitly asked for. It does mean citation count is now a first-class ranking
+axis rather than a tie-break, so the sentence above about impact "breaking close calls, not
+overturning larger ones" no longer describes the default — it describes weights up to about 0.3, and
+the Settings hint says so rather than leaving the old promise standing where it stopped being true.
+
+Because the impact term now means a different quantity, a stored weight tuned against the old
+percentile scale no longer refers to anything. Settings migrate v4 → v5: a stored `0.25` — the old
+default, and so indistinguishable from never having been touched — is replaced with the new default;
+any other value is left exactly as the user set it, on the principle that a deliberate choice
+outranks our rescaling.
+
+**Amended a sixth time (supplementary deposits are demoted).** The same BoltzGen report contained a
+second, independent problem the citation fix does not address. The Figshare record at position 4 was
+not a paper at all — it was a supplementary deposit accompanying one. Fixing citation weighting moves
+it down because it has no citations, but only incidentally: a supplementary deposit that _did_
+accumulate citations would climb straight back, and the reason it does not belong at position 4 has
+nothing to do with how often it is cited. It is the wrong **kind** of record.
+
+Ranking now subtracts a penalty by work type, alongside the citation boost:
+
+| Signal                 | Penalty | Why                                                                               |
+| ---------------------- | ------- | --------------------------------------------------------------------------------- |
+| OpenAlex `is_paratext` | 1.0     | The index itself says this is not a research work — issue covers, ToCs, mastheads |
+| `dataset`              | 0.5     | The reported case; supplementary data from both Crossref and OpenAlex             |
+| `erratum`              | 0.5     | The correction already appears as a badge on the paper it corrects                |
+| `editorial`            | 0.2     | A tie-break only — an editorial or perspective is real, citable scholarly writing |
+
+_On the editorial number._ It was first written as 0.75 and corrected on review. That figure was
+aimed at OpenAlex folding its `paratext` type into `editorial`, and so charged every genuine
+editorial for a mapping artifact — a commentary or perspective is frequently exactly what someone
+wants when looking for how a field received a result. `is_paratext` catches paratext directly at full
+strength and is the assertion that actually means "not a research work", which leaves the type-based
+number free to describe editorials alone. At 0.2 an editorial loses to an equally relevant research
+article and still beats a clearly worse-matching one — the difference between a tie-break and a
+demotion. The residual gap, named rather than hidden: an OpenAlex record typed `paratext` that was
+never enriched arrives with no signals and is judged on 0.2 alone. Front matter carries almost no
+abstract text to embed, so it rarely ranks high enough for that to bite.
+
+Three properties this deliberately has:
+
+_It demotes, it never filters._ Same principle as refusing to truncate knowledge-base indexing at the
+capacity ceiling: a record that is absent cannot be judged, and a user searching for a dataset on
+purpose must not be told none exists. A strongly matching dataset still outranks a weakly matching
+article — the penalty is a handicap, not a floor.
+
+_`preprint` and `other` are not penalised._ Preprints because bioRxiv and medRxiv are requested
+sources and this ADR already says a preprint is labelled rather than demoted; `other` because it is
+the fallback both Crossref and OpenAlex map an absent type to, so penalising it would punish thin
+metadata rather than supplementary material.
+
+_The penalty is unscaled by `litCitationImpactWeight`._ A claim about what a record **is** must not
+weaken as the citation knob is turned down — otherwise setting that weight to 0 to get pure relevance
+ranking would also silently stop demoting supplementary deposits, which is not what "0" says on the
+control. This is why `applyImpactBoost` became `applyRankAdjustments`, taking impact and penalty
+together and computing one score in one sorting pass: applying them as two successive sorts would
+have let the second rescore from `relevance` alone and discard the first, which is exactly the sort of
+bug that leaves an ordering looking plausible and being wrong.
+
+The four numbers are provisional, chosen against one reported result set rather than a measured
+corpus — the same status `litMinVenueCitedness` had before it got a control. They are constants
+rather than settings on purpose: a knob per record type is more configuration than this pane should
+ask anyone to reason about. If they prove wrong the answer is better numbers, or one combined
+control, not five.
+
 **Open questions.**
 
 1. _Does local semantic re-ranking actually beat PubMed's own relevance ranking?_ Assumed, not
@@ -2221,3 +2319,86 @@ the smoke suite so that question can be reopened against measurements rather tha
    explicit consent, and Crossref receives the DOIs of everything being read.
 2. _Whether the quoted-variant expansion helps or hurts on ordinary prose queries._ It is measured
    only on tool names so far.
+
+---
+
+## ADR-032 — Sources are queried in parallel, and one failing does not lose the others
+
+**Status:** Accepted (2026-08-05)
+
+**Context.** `useLiteratureSearch.search()` queried PubMed, bioRxiv, medRxiv, and OpenAlex as four
+sequential `await`s against four independent hosts, so wall-clock latency was the sum of four
+round trips rather than the slowest one. A literature search already asks the user to wait through
+enrichment, a retraction check, and a local embedding pass on top; spending three of those round
+trips waiting for hosts that could have been answering concurrently is latency bought for nothing.
+
+The failure behaviour was worse than the latency. A single rejection from any one source escaped
+into the outer `catch`, painted an error banner, and discarded **every** result — including the
+three sources that had already answered successfully. Scholarly APIs are third-party infrastructure
+with rate limits, maintenance windows, and occasional 500s; treating any one of them as a
+precondition for showing anything means a routine outage at one host presents as a totally broken
+feature.
+
+**Decision.**
+
+_Fan out with `Promise.allSettled`, indexed by position._ Each enabled source contributes a
+descriptor — label, disclosure note, and a thunk — built in the current source order (PubMed first,
+per ADR-031). Results are read back **by index** rather than pushed as they resolve.
+
+This is not incidental. The order of the groups array is load-bearing twice over: `mergeRecords`
+falls back to first-wins when neither of two duplicate records has an abstract, and
+`rankByRelevance` sorts stably, so source order survives as the final tie-break. Pushing results in
+completion order would make both of those depend on which host happened to answer first, which is to
+say non-deterministic. `Promise.allSettled` preserves input order, and indexing into it keeps the
+output byte-identical to the sequential implementation for any given set of successful responses.
+
+_Partial failure is a warning, not an error._ A rejected source contributes an empty group and an
+entry in a new `failedSources: { source, message }[]` on `LiteratureState`, rendered in the pane as a
+warning `MessageBar` naming the source. The results that did arrive are shown. Only when **every**
+enabled source fails does this become a full `setError`, because at that point there is genuinely
+nothing to show and a warning above an empty list would be a worse description of the situation than
+an error.
+
+Naming the failed source matters more than it might appear. "Some results may be missing" is
+unactionable; "PubMed could not be reached" tells a user whose search is biomedical that the result
+set is not merely thin but is missing the source that mattered, and tells a user whose search is not
+biomedical that they can ignore it. The distinction is theirs to make and they can only make it if
+we say which host failed.
+
+_Enrichment and the retraction check run together._ `openAlexClient.enrich(dois)` and
+`crossref.lookupUpdates(dois)` are independent, keyed on the same DOI list, and were also sequential.
+They now run under `allSettled` with the same isolation. A rejected retraction lookup leaves
+`updates.checked` **false** rather than resolving to an empty update list, which ADR-029 requires:
+"not checked" and "checked, nothing found" are different claims, and rendering the first as the
+second is how a retracted paper gets presented as clean.
+
+_Rate-limit etiquette is not a reason to serialize._ The pacing in `etiquette.ts` is per client
+instance and these are four different hosts, so concurrency across them violates nobody's terms.
+Sequencing _within_ a client is preserved — `enrich`'s internal batch loop stays serial, so any one
+source still sees one request at a time.
+
+_A partially failed search is still cached,_ with its `failedSources` stored alongside the results,
+so reusing it from "recent searches" reproduces the same warning. The alternative — refusing to
+cache a degraded result set — would silently discard results the user can see on screen, and a
+cached entry that shows results without the warning that explains why they are thin would be the
+dishonest version of the same thing.
+
+**Alternatives.**
+
+_`Promise.all`._ Rejected: it rejects on the first failure, which is the current all-or-nothing
+behaviour with extra concurrency, i.e. the wrong half of the problem fixed.
+
+_Push results as they resolve, and re-sort afterwards._ Rejected: it makes deduplication and
+tie-breaking depend on host response times. The bug this would introduce is intermittent and
+ordering-only, which is the hardest class to notice and the hardest to reproduce.
+
+_Retry a failed source before reporting it._ Deferred. It is a reasonable thing to want, but a retry
+policy needs to distinguish a 429 from a 500 from a DNS failure to avoid making an overloaded host
+worse, and that is a larger design than this one. A named failure the user can act on is the
+honest interim.
+
+**Consequences.** Wall-clock search time becomes the slowest source rather than the sum. The pane
+gains a state it did not have — results plus a warning — and every place that renders results has to
+tolerate it. Result ordering is unchanged by construction, which is the property to hold hardest:
+retrieval order drives which papers a user reads, and this change must not be allowed to alter it as
+a side effect of going faster.

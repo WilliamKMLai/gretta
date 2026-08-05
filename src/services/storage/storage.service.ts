@@ -18,6 +18,7 @@ import {
   settingsV1ToV2,
   settingsV2ToV3,
   settingsV3ToV4,
+  settingsV4ToV5,
 } from './migrations';
 import type { StorageKey, StorageService } from './storage.types';
 
@@ -34,8 +35,13 @@ const MIGRATIONS: Partial<Record<StorageKey, Record<number, Migration>>> = {
   // ADR-021: conversation threads flatten into single-shot generation records.
   'gretta/history': { 1: conversationsV1ToHistoryV2 },
   // ADR-022: corrected context-window and embedding-model defaults.
-  // ADR-029 amendment: adds litCitationImpactWeight.
-  'gretta/settings': { 1: settingsV1ToV2, 2: settingsV2ToV3, 3: settingsV3ToV4 },
+  // ADR-029 amendment: adds litCitationImpactWeight, then rescales it.
+  'gretta/settings': {
+    1: settingsV1ToV2,
+    2: settingsV2ToV3,
+    3: settingsV3ToV4,
+    4: settingsV4ToV5,
+  },
 };
 
 /** The subset of Web Storage the adapter needs; injectable for tests. */

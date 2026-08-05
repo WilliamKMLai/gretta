@@ -20,18 +20,18 @@ import {
   approveQuery,
   createCrossrefClient,
   createOpenAlexClient,
-  createPubMedClient,
   describeCredibility,
   queryText,
 } from '../../services/literature';
-import type { AssessedRecord, LiteratureRecord } from '../../types/literature';
+import type { AssessedRecord } from '../../types/literature';
 import { useSettingsStore } from '../settings';
-import { useLiteratureStore, type SourceQuery } from './literature.store';
+import { useLiteratureStore } from './literature.store';
 import { DRAFT_QUERY_SYSTEM, buildDraftPrompt, extractDraftedQuery } from './draftQuery';
 import { cacheKey, enabledSourceKeys, hashPassage, writeCache } from './cache';
 import type { CacheEntry } from './cache';
 import { deliverRanked, emptySignals, mergeRecords, resolveCacheHit } from './searchPipeline';
 import { abortRun, beginRun, endRun, isCurrent, onlyIfCurrent, wasAborted } from './searchRun';
+import { buildSourceDescriptors, failureMessage, fanOut } from './sourceFanOut';
 
 export interface UseLiteratureSearch {
   captureAndDraft: () => Promise<void>;
@@ -169,58 +169,30 @@ export function useLiteratureSearch(): UseLiteratureSearch {
     const cacheEntryKey = cacheKey(queryText(approval.query), enabledSources, fromYear, perSource);
 
     try {
-      const groups: LiteratureRecord[][] = [];
-      const medline = new Map<string, boolean>();
-      /** What each source actually received, for the disclosure in the pane. */
-      const sent: SourceQuery[] = [];
-
-      // PubMed first: it is the primary source, free, account-free, and has the
-      // best abstract coverage of any of them (ADR-031).
-      if (settings.litSources.pubmed) {
-        const result = await createPubMedClient(shared).searchDetailed(
-          approval.query,
-          perSource,
-          controller.signal,
-        );
-        groups.push(result.records);
-        for (const [pmid, indexed] of result.medlineIndexed) medline.set(pmid, indexed);
-        sent.push({
-          source: 'PubMed',
-          query: queryText(approval.query),
-          note: 'Retried with terms OR-ed if the strict query matched nothing.',
-        });
-      }
-
-      const wantsPreprints = settings.litSources.biorxiv || settings.litSources.medrxiv;
-      const crossrefSearch = wantsPreprints ? createCrossrefClient(shared) : null;
-
-      for (const server of ['biorxiv', 'medrxiv'] as const) {
-        if (crossrefSearch === null || !settings.litSources[server]) continue;
-        groups.push(
-          await crossrefSearch.searchPreprints(
-            approval.query,
-            perSource,
-            server,
-            controller.signal,
-          ),
-        );
-        sent.push({
-          source: server === 'biorxiv' ? 'bioRxiv' : 'medRxiv',
-          query: queryText(approval.query),
-          note: 'Sent to Crossref, filtered to preprints from this server — it publishes no search API of its own.',
-        });
-      }
-
-      const openAlexClient = settings.litSources.openalex ? createOpenAlexClient(shared) : null;
-      if (openAlexClient !== null) {
-        groups.push(
-          await openAlexClient.search(approval.query, perSource, fromYear, controller.signal),
-        );
-        sent.push({ source: 'OpenAlex', query: queryText(approval.query) });
-      }
-
-      if (groups.length === 0) {
+      const descriptors = buildSourceDescriptors(
+        approval.query,
+        settings,
+        shared,
+        fromYear,
+        controller.signal,
+      );
+      if (descriptors.length === 0) {
         setError('No source is turned on. Enable at least one under Settings → Literature.');
+        return;
+      }
+
+      // Four hosts, four concurrent requests, wall-clock ≈ the slowest rather
+      // than the sum (ADR-032). Failures are isolated per source here; whether
+      // they add up to a real error is decided below, where it is known what
+      // else there is to show.
+      const { groups, sent, failed, medline, attempted } = await fanOut(descriptors);
+
+      if (failed.length === attempted) {
+        setError(
+          `No source could be reached. ${failed
+            .map((entry) => `${entry.source}: ${entry.message}`)
+            .join(' ')}`,
+        );
         return;
       }
 
@@ -236,7 +208,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
 
       const records = mergeRecords(withinRange);
       if (records.length === 0) {
-        deliver([], 'source-order', 0, null, sent);
+        deliver([], 'source-order', 0, null, sent, failed);
         return;
       }
 
@@ -244,9 +216,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
 
       // Enrichment. Absent when the toggle is off, which the badges render as
       // "not checked" rather than as absent signals (ADR-029).
-      const enrichment =
-        openAlexClient === null ? null : await openAlexClient.enrich(dois, controller.signal);
-
+      const openAlexClient = settings.litSources.openalex ? createOpenAlexClient(shared) : null;
       const crossref = settings.litVerification ? createCrossrefClient(shared) : null;
       if (crossref !== null) {
         sent.push({
@@ -255,11 +225,40 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         });
       }
 
-      // Retractions. Batched — one request per 20 DOIs — because checking them
-      // serially took twelve seconds for ten results, and ADR-029 will not let
-      // the check happen lazily after the list has painted.
-      const updates =
-        crossref === null ? null : await crossref.lookupUpdates(dois, controller.signal);
+      /*
+       * Independent, both keyed on the same DOI list, so they run together
+       * under the same isolation as the source fan-out (ADR-032). Retractions
+       * are batched — one request per 20 DOIs — because checking them serially
+       * took twelve seconds for ten results, and ADR-029 will not let the check
+       * happen lazily after the list has painted.
+       */
+      const [enrichOutcome, updatesOutcome] = await Promise.allSettled([
+        openAlexClient?.enrich(dois, controller.signal) ?? Promise.resolve(null),
+        crossref?.lookupUpdates(dois, controller.signal) ?? Promise.resolve(null),
+      ]);
+
+      const enrichment = enrichOutcome.status === 'fulfilled' ? enrichOutcome.value : null;
+      if (enrichOutcome.status === 'rejected') {
+        failed.push({
+          source: 'OpenAlex (citations and venue details)',
+          message: failureMessage(enrichOutcome.reason),
+        });
+      }
+
+      /*
+       * Null on rejection, which flows into `{ checked: false }` below rather
+       * than an empty update list. ADR-029 requires the distinction: "not
+       * checked" and "checked, nothing found" are different claims, and
+       * rendering the first as the second is how a retracted paper gets
+       * presented as clean.
+       */
+      const updates = updatesOutcome.status === 'fulfilled' ? updatesOutcome.value : null;
+      if (updatesOutcome.status === 'rejected') {
+        failed.push({
+          source: 'Crossref (retraction check)',
+          message: failureMessage(updatesOutcome.reason),
+        });
+      }
 
       const assessed: AssessedRecord[] = records.map((record) => {
         const key = record.doi?.toLowerCase() ?? '';
@@ -269,7 +268,9 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         if (record.pmid !== null && medline.size > 0) {
           signals.pubmed = { inPubMed: true, medlineIndexed: medline.get(record.pmid) ?? null };
         }
-        if (crossref !== null && record.doi !== null) {
+        // `updates`, not `crossref`: the toggle being on says we asked, not
+        // that we got an answer. A failed lookup must not assert registration.
+        if (updates !== null && record.doi !== null) {
           signals.crossref = {
             registered: true,
             hasDepositedReferences: null,
@@ -289,6 +290,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
       const { ordered, ranking, note, hidden } = await deliverRanked(
         assessed,
         sent,
+        failed,
         passage,
         ollama,
         settings,
@@ -306,6 +308,7 @@ export function useLiteratureSearch(): UseLiteratureSearch {
         hiddenCount: hidden,
         rankingNote: note,
         sentQueries: sent,
+        failedSources: failed,
         query: queryText(approval.query),
         sources: enabledSources,
         fromYear,

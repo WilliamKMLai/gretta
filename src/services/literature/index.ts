@@ -13,7 +13,7 @@ export { MAX_QUERY_CHARS, approveQuery, normalizeQuery, queryText } from './quer
 
 export type { Rankable, Ranked } from './rank';
 export {
-  applyImpactBoost,
+  applyRankAdjustments,
   cosineSimilarity,
   embeddableText,
   lexicalOverlap,

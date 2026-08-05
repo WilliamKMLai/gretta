@@ -27,7 +27,7 @@ describe('useLiteratureStore', () => {
   });
 
   it('does not clear results while the query is being reworded', () => {
-    useLiteratureStore.getState().setResults([], 'semantic', 0, null, []);
+    useLiteratureStore.getState().setResults([], 'semantic', 0, null, [], []);
     useLiteratureStore.getState().setDraft('new wording');
     expect(useLiteratureStore.getState().ranking).toBe('semantic');
     expect(useLiteratureStore.getState().phase).toBe('done');
@@ -50,7 +50,7 @@ describe('useLiteratureStore', () => {
   });
 
   it('records why ranking fell back, so a fallback is not mistaken for a fault', () => {
-    useLiteratureStore.getState().setResults([], 'lexical', 0, 'model not pulled', []);
+    useLiteratureStore.getState().setResults([], 'lexical', 0, 'model not pulled', [], []);
     expect(useLiteratureStore.getState().rankingNote).toBe('model not pulled');
   });
 
@@ -69,7 +69,14 @@ describe('useLiteratureStore', () => {
     // and show another.
     useLiteratureStore
       .getState()
-      .setResults([], 'semantic', 2, 'fell back to lexical', [{ source: 'PubMed', query: 'q' }]);
+      .setResults(
+        [],
+        'semantic',
+        2,
+        'fell back to lexical',
+        [{ source: 'PubMed', query: 'q' }],
+        [{ source: 'PubMed', message: 'HTTP 500' }],
+      );
     useLiteratureStore.getState().reset();
     const state = useLiteratureStore.getState();
     expect(state.results).toEqual([]);
@@ -77,6 +84,7 @@ describe('useLiteratureStore', () => {
     expect(state.hiddenCount).toBe(0);
     expect(state.rankingNote).toBeNull();
     expect(state.sentQueries).toEqual([]);
+    expect(state.failedSources).toEqual([]);
     expect(state.phase).toBe('idle');
   });
 });

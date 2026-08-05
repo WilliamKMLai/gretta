@@ -66,6 +66,31 @@ export function settingsV3ToV4(data: unknown): unknown {
   return { ...data, litCitationImpactWeight: 0.25 };
 }
 
+/** The v4 default, which v5 treats as "never touched". */
+const V4_CITATION_IMPACT_DEFAULT = 0.25;
+/** ADR-029's fifth amendment; must track `DEFAULT_SETTINGS`. */
+const V5_CITATION_IMPACT_DEFAULT = 0.6;
+
+/**
+ * v4 → v5 settings: rescales `litCitationImpactWeight`, because the quantity it
+ * weights changed (ADR-029, fifth amendment). In v4 it multiplied
+ * `citedByPercentileYear`, which OpenAlex leaves null for most preprints, so
+ * the term it scaled was frequently zero; in v5 it multiplies a log-scaled raw
+ * citation count that is present whenever OpenAlex is. A number tuned against
+ * the old scale does not mean the same thing on the new one.
+ *
+ * Only a stored `0.25` is replaced — the v4 default, and therefore
+ * indistinguishable from a user who never opened the Advanced panel. Anything
+ * else is left alone: we cannot rescale a deliberate choice without guessing at
+ * the intent behind it, and a user who set 0 to turn the boost off entirely
+ * must not have it switched back on by an upgrade.
+ */
+export function settingsV4ToV5(data: unknown): unknown {
+  if (!isRecord(data)) return data;
+  if (data.litCitationImpactWeight !== V4_CITATION_IMPACT_DEFAULT) return data;
+  return { ...data, litCitationImpactWeight: V5_CITATION_IMPACT_DEFAULT };
+}
+
 /** Shape of a v1 `gretta/history` payload, as far as we rely on it. */
 interface LegacyMessage {
   id?: unknown;

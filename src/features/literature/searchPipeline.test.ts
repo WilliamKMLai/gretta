@@ -42,6 +42,7 @@ function cachedEntry(passage: string): CacheEntry {
     hiddenCount: 0,
     rankingNote: null,
     sentQueries: [{ source: 'PubMed', query: 'cats' }],
+    failedSources: [],
     query: 'cats',
     sources: ['pubmed'],
     fromYear: null,
@@ -71,18 +72,22 @@ function stubOllama(embed: OllamaClient['embed']): OllamaClient {
   };
 }
 
-const settings = { defaultEmbeddingModel: 'nomic-embed-text', litCitationImpactWeight: 0.25 };
+/** The shipped default weight (ADR-029, fifth amendment), not a test-local
+ * number: these cases are claims about what a user actually gets. */
+const settings = { defaultEmbeddingModel: 'nomic-embed-text', litCitationImpactWeight: 0.6 };
 
 /**
- * Same shape as `record()`, but with an OpenAlex citation-impact signal set.
- * `citedByCount` defaults to a nonzero value so these fixtures exercise
- * percentile-driven boosting by default; pass `0` explicitly for the
- * zero-citations-means-zero-impact cases.
+ * Same shape as `record()`, but with an OpenAlex citation signal set.
+ *
+ * `citedByPercentileYear` defaults to **null**, which is the case that
+ * mattered: OpenAlex leaves it unpopulated for most preprints and recent
+ * deposits, and ranking must not depend on it (ADR-029, fifth amendment).
+ * It is still settable so the tests can prove it is ignored.
  */
-function recordWithPercentile(
+function recordWithCitations(
   id: string,
-  citedByPercentileYear: number,
-  citedByCount: number | null = 10,
+  citedByCount: number | null,
+  citedByPercentileYear: number | null = null,
 ): AssessedRecord {
   return {
     ...record(id),
@@ -109,25 +114,83 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-describe('rank citation impact', () => {
-  it('breaks an equal-relevance tie in favor of higher citation impact', async () => {
-    // Both candidates embed identically to the passage, so relevance ties —
-    // only the citation-impact nudge (DECISIONS.md ADR-029's amendment)
-    // decides the order.
-    const embed = vi.fn<OllamaClient['embed']>((_model, input) =>
-      Promise.resolve(input.map(() => [1, 0])),
-    );
-    const ollama = stubOllama(embed);
+/** Every candidate embeds identically to the passage, so relevance ties and
+ * only the citation nudge decides the order. */
+function tiedRelevance(): OllamaClient {
+  return stubOllama(
+    vi.fn<OllamaClient['embed']>((_model, input) => Promise.resolve(input.map(() => [1, 0]))),
+  );
+}
 
+describe('rank citation impact', () => {
+  it('breaks an equal-relevance tie in favor of more citations', async () => {
     const { ordered } = await rank(
-      [recordWithPercentile('low', 10), recordWithPercentile('high', 90)],
+      [recordWithCitations('low', 10), recordWithCitations('high', 90)],
       'a passage',
-      ollama,
+      tiedRelevance(),
       settings,
       new AbortController(),
     );
 
     expect(ordered.map((entry) => entry.record.id)).toEqual(['high', 'low']);
+  });
+
+  it('boosts a heavily cited record whose year percentile OpenAlex never computed', async () => {
+    // The BoltzGen report (ADR-029, fifth amendment). Impact used to be
+    // `citedByPercentileYear / 100` with null mapped to 0, so a 2025 preprint
+    // with 59 citations and no percentile scored exactly the same zero impact
+    // as a 2026 Figshare deposit with none, and the boost cancelled out on the
+    // one comparison it existed to decide. Both percentiles are null here, as
+    // they were in the real result set.
+    const { ordered } = await rank(
+      [recordWithCitations('uncited-deposit', 0), recordWithCitations('cited-preprint', 59)],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['cited-preprint', 'uncited-deposit']);
+  });
+
+  it('lets a well-cited record overtake a more relevant uncited one at the default weight', async () => {
+    // The behavioural change, stated as a test rather than left implicit: at
+    // 0.6 the nudge is no longer only a tie-break. The uncited record is the
+    // better semantic match (cosine 1.0 against the cited record's 0.71) and
+    // still loses, because 59 citations is worth ~0.46 here.
+    const embed = vi.fn<OllamaClient['embed']>((_model, [, ...texts]: readonly string[]) =>
+      Promise.resolve([[1, 0], ...texts.map((_, index) => (index === 0 ? [1, 0] : [1, 1]))]),
+    );
+
+    const { ordered } = await rank(
+      [recordWithCitations('uncited-exact-match', 0), recordWithCitations('cited', 59)],
+      'a passage',
+      stubOllama(embed),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['cited', 'uncited-exact-match']);
+  });
+
+  it('saturates, so a decades-old blockbuster barely outscores a recent well-cited paper', async () => {
+    // Why a raw count is safe to use despite rewarding age: the curve is
+    // log-scaled, so 500 citations beats 59 by ~0.23 rather than by 8x. Made
+    // observable by pitting them against a relevance gap that 0.23 cannot
+    // close but a linear scale easily would.
+    const embed = vi.fn<OllamaClient['embed']>((_model, [, ...texts]: readonly string[]) =>
+      Promise.resolve([[1, 0], ...texts.map((_, index) => (index === 0 ? [1, 0] : [1, 1]))]),
+    );
+
+    const { ordered } = await rank(
+      [recordWithCitations('recent-59', 59), recordWithCitations('ancient-500', 500)],
+      'a passage',
+      stubOllama(embed),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['recent-59', 'ancient-500']);
   });
 
   it('does not let a maximally-cited but irrelevant candidate beat a clearly relevant one', async () => {
@@ -141,7 +204,7 @@ describe('rank citation impact', () => {
     const ollama = stubOllama(embed);
 
     const { ordered } = await rank(
-      [recordWithPercentile('relevant', 0), recordWithPercentile('cited', 100)],
+      [recordWithCitations('relevant', 0), recordWithCitations('cited', 5000)],
       'a passage',
       ollama,
       settings,
@@ -161,7 +224,7 @@ describe('rank citation impact', () => {
     const ollama = stubOllama(embed);
 
     const { ordered } = await rank(
-      [recordWithPercentile('low', 10), recordWithPercentile('high', 90)],
+      [recordWithCitations('low', 10), recordWithCitations('high', 90)],
       'a passage',
       ollama,
       { ...settings, litCitationImpactWeight: 0 },
@@ -185,8 +248,8 @@ describe('rank citation impact', () => {
 
     const { ordered } = await rank(
       [
-        recordWithPercentile('zero-citations', 99, 0),
-        recordWithPercentile('fifty-eight-citations', 50, 58),
+        recordWithCitations('zero-citations', 0, 99),
+        recordWithCitations('fifty-eight-citations', 58, 50),
       ],
       'a passage',
       ollama,
@@ -198,6 +261,169 @@ describe('rank citation impact', () => {
       'fifty-eight-citations',
       'zero-citations',
     ]);
+  });
+});
+
+describe('rank supplementary demotion', () => {
+  /** A record of a given work type, with no citation signal either way. */
+  function typed(id: string, type: LiteratureRecord['type']): AssessedRecord {
+    const base = record(id);
+    return { ...base, record: { ...base.record, type } };
+  }
+
+  /** OpenAlex asserting a record is not a research work at all. */
+  function paratext(id: string): AssessedRecord {
+    const entry = recordWithCitations(id, 0);
+    const openAlex = entry.signals.openAlex;
+    if (openAlex === null) throw new Error('fixture lost its OpenAlex signal');
+    return { ...entry, signals: { ...entry.signals, openAlex: { ...openAlex, isParatext: true } } };
+  }
+
+  it('sinks a dataset deposit below an equally relevant article', async () => {
+    // The reported case: a Figshare deposit accompanying a preprint, sitting
+    // above the work it belongs to.
+    const { ordered } = await rank(
+      [typed('figshare-deposit', 'dataset'), typed('the-paper', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['the-paper', 'figshare-deposit']);
+  });
+
+  it('sinks paratext below everything, on OpenAlex saying so directly', async () => {
+    const { ordered } = await rank(
+      [paratext('issue-cover'), typed('the-paper', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['the-paper', 'issue-cover']);
+  });
+
+  it('keeps an erratum notice below the literature it corrects', async () => {
+    const { ordered } = await rank(
+      [typed('correction-notice', 'erratum'), typed('the-paper', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['the-paper', 'correction-notice']);
+  });
+
+  it('demotes an editorial only as a tie-break, not out of contention', async () => {
+    // An editorial, commentary, or perspective is real citable scholarly
+    // writing. It loses to an equally relevant research article...
+    const tied = await rank(
+      [typed('an-editorial', 'editorial'), typed('an-article', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+    expect(tied.ordered.map((entry) => entry.record.id)).toEqual(['an-article', 'an-editorial']);
+
+    // ...but a clearly better match still wins, which is what separates a
+    // tie-break from a demotion. The editorial embeds at cosine 1.0 against
+    // the article's 0.71.
+    const embed = vi.fn<OllamaClient['embed']>((_model, [, ...texts]: readonly string[]) =>
+      Promise.resolve([[1, 0], ...texts.map((_, index) => (index === 0 ? [1, 0] : [1, 1]))]),
+    );
+    const better = await rank(
+      [typed('an-editorial', 'editorial'), typed('an-article', 'article')],
+      'a passage',
+      stubOllama(embed),
+      settings,
+      new AbortController(),
+    );
+    expect(better.ordered.map((entry) => entry.record.id)).toEqual(['an-editorial', 'an-article']);
+  });
+
+  it('still sinks a dataset that matches better than the article it accompanies', async () => {
+    // The contrast with the editorial case above: at 0.5 a dataset does not
+    // win on a 0.29 relevance advantage, because supplementary material is
+    // rarely what someone writing prose is looking for.
+    const embed = vi.fn<OllamaClient['embed']>((_model, [, ...texts]: readonly string[]) =>
+      Promise.resolve([[1, 0], ...texts.map((_, index) => (index === 0 ? [1, 0] : [1, 1]))]),
+    );
+
+    const { ordered } = await rank(
+      [typed('the-dataset', 'dataset'), typed('the-paper', 'article')],
+      'a passage',
+      stubOllama(embed),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['the-paper', 'the-dataset']);
+  });
+
+  it('does not demote a preprint — bioRxiv and medRxiv are requested sources', async () => {
+    // ADR-029 is explicit that a preprint is labelled, not demoted. Two of the
+    // four enabled sources return nothing else.
+    const { ordered } = await rank(
+      [typed('a-preprint', 'preprint'), typed('an-article', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['a-preprint', 'an-article']);
+  });
+
+  it('does not demote a record whose type simply is not known', async () => {
+    // `other` is the fallback for an absent type from both Crossref and
+    // OpenAlex. Penalising it would punish thin metadata rather than
+    // supplementary material.
+    const { ordered } = await rank(
+      [typed('untyped', 'other'), typed('an-article', 'article')],
+      'a passage',
+      tiedRelevance(),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['untyped', 'an-article']);
+  });
+
+  it('does not hide a demoted record — a strongly matching dataset still surfaces', async () => {
+    // Demotion, never a filter: a user searching for a dataset on purpose must
+    // still be able to find one.
+    const embed = vi.fn<OllamaClient['embed']>((_model, [, ...texts]: readonly string[]) =>
+      Promise.resolve([[1, 0], ...texts.map((_, index) => (index === 0 ? [1, 0] : [0, 1]))]),
+    );
+
+    const { ordered } = await rank(
+      [typed('exact-match-dataset', 'dataset'), typed('unrelated-article', 'article')],
+      'a passage',
+      stubOllama(embed),
+      settings,
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual([
+      'exact-match-dataset',
+      'unrelated-article',
+    ]);
+  });
+
+  it('demotes regardless of the citation weight, including when it is off', async () => {
+    const { ordered } = await rank(
+      [typed('figshare-deposit', 'dataset'), typed('the-paper', 'article')],
+      'a passage',
+      tiedRelevance(),
+      { ...settings, litCitationImpactWeight: 0 },
+      new AbortController(),
+    );
+
+    expect(ordered.map((entry) => entry.record.id)).toEqual(['the-paper', 'figshare-deposit']);
   });
 });
 
@@ -301,6 +527,7 @@ describe('resolveCacheHit', () => {
       cached.hiddenCount,
       cached.rankingNote,
       cached.sentQueries,
+      cached.failedSources,
     );
   });
 

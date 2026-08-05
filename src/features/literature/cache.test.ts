@@ -54,6 +54,7 @@ function entryPayload(
     hiddenCount: 0,
     rankingNote: null,
     sentQueries: [{ source: 'PubMed', query: 'q' }],
+    failedSources: [],
     query: 'cats',
     sources: ['pubmed'],
     fromYear: null,

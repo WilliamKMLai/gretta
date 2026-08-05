@@ -9,6 +9,7 @@ import {
   settingsV1ToV2,
   settingsV2ToV3,
   settingsV3ToV4,
+  settingsV4ToV5,
 } from './migrations';
 
 interface HistoryShape {
@@ -259,5 +260,36 @@ describe('settingsV3ToV4', () => {
   it('passes through anything that is not an object', () => {
     expect(settingsV3ToV4('nonsense')).toBe('nonsense');
     expect(settingsV3ToV4(null)).toBeNull();
+  });
+});
+
+describe('settingsV4ToV5', () => {
+  it('rescales the untouched v4 default to the new one', () => {
+    // The weight now multiplies a log-scaled raw citation count rather than a
+    // frequently-null percentile (ADR-029, fifth amendment), so a number tuned
+    // against the old scale does not carry over.
+    expect(settingsV4ToV5({ ollamaUrl: 'http://x', litCitationImpactWeight: 0.25 })).toEqual({
+      ollamaUrl: 'http://x',
+      litCitationImpactWeight: 0.6,
+    });
+  });
+
+  it('leaves a value the user chose alone', () => {
+    expect(settingsV4ToV5({ litCitationImpactWeight: 0.4 })).toEqual({
+      litCitationImpactWeight: 0.4,
+    });
+  });
+
+  it('does not switch the nudge back on for a user who turned it off', () => {
+    // 0 is a deliberate "rank by relevance alone". An upgrade that quietly
+    // reinstated citation weighting would be the worst version of this change.
+    expect(settingsV4ToV5({ litCitationImpactWeight: 0 })).toEqual({
+      litCitationImpactWeight: 0,
+    });
+  });
+
+  it('passes through anything that is not an object', () => {
+    expect(settingsV4ToV5('nonsense')).toBe('nonsense');
+    expect(settingsV4ToV5(null)).toBeNull();
   });
 });

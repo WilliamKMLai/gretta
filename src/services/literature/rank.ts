@@ -17,11 +17,11 @@
  * twenty lines of arithmetic is the cheaper of the two costs. The duplication
  * is deliberate and tested on both sides — it is not drift.
  *
- * `applyImpactBoost` is a deliberate, later exception to "nothing but the
- * claim drives ranking": ADR-029's amendment lets citation impact nudge the
- * final order, as a distinct post-relevance step — never inside
- * `embeddableText` or the embedding itself, which stays exactly what this
- * module originally specified.
+ * `applyRankAdjustments` is a deliberate, later exception to "nothing but the
+ * claim drives ranking": ADR-029's amendments let citation impact nudge the
+ * final order and let supplementary deposits be demoted by work type, as one
+ * distinct post-relevance step — never inside `embeddableText` or the
+ * embedding itself, which stays exactly what this module originally specified.
  *
  * Pure: imports nothing but its own types, tested directly.
  */
@@ -204,30 +204,56 @@ export function rankByOverlap<T>(
     .sort((left, right) => right.relevance - left.relevance);
 }
 
+/** The two non-relevance terms in the final ordering. Both optional; omitting
+ * both leaves the relevance order untouched. */
+export interface RankAdjustments<T> {
+  /**
+   * 0..1. A candidate never checked against the impact source maps to 0 —
+   * neutral, not penalised, since absence of a check is not evidence of low
+   * impact (ADR-029).
+   */
+  impact?: (entry: T) => number;
+  /** Bounds how far `impact` can move a candidate. */
+  impactWeight?: number;
+  /**
+   * Subtracted at full strength, *unscaled by `impactWeight`*. A demotion for
+   * what a record **is** — a dataset deposit, an erratum notice — is a
+   * different claim from a nudge for how much it is cited, and tying it to the
+   * citation weight would mean turning citations off also stopped supplementary
+   * material being demoted (ADR-029, sixth amendment).
+   */
+  penalty?: (entry: T) => number;
+}
+
 /**
- * Nudges a relevance-ranked list toward higher-impact candidates, without
- * letting impact override relevance for a genuinely poor match (DECISIONS.md
- * ADR-029's amendment on ranking by citation impact). This runs *after*
- * relevance ranking, as a distinct step — it never enters `embeddableText` or
- * the embedding itself, which stays exactly what ADR-029 originally specified:
- * the claim, nothing else.
+ * Re-orders a relevance-ranked list by relevance plus citation impact minus a
+ * type penalty (DECISIONS.md ADR-029, amendments on citation impact and on
+ * supplementary deposits).
  *
- * `impact` must return 0..1; a candidate never checked against the impact
- * source should map to 0 (neutral — not penalised, since absence of a check
- * is not evidence of low impact) rather than the caller special-casing it.
- * `weight` bounds how much a maximally-impactful candidate can move: at
- * weight 0.15, no re-sort can close more than a 0.15 relevance gap on impact
- * alone, so a highly relevant but uncited paper still beats a barely
- * relevant, highly-cited one — impact breaks close calls, it does not
- * override them.
+ * This runs *after* relevance ranking, as a distinct step — neither term ever
+ * enters `embeddableText` or the embedding itself, which stays exactly what
+ * ADR-029 originally specified: the claim, nothing else.
+ *
+ * One scoring pass and one sort, deliberately. Applying the boost and the
+ * penalty as two successive sorts would mean the second re-derived its score
+ * from `relevance` alone and silently discarded the first — the kind of bug
+ * that leaves the ordering plausible-looking and wrong.
+ *
+ * The sort is stable, so candidates that end up with equal scores keep the
+ * order relevance ranking gave them, which is itself stable back to source
+ * order (ADR-032).
  */
-export function applyImpactBoost<T extends { relevance: number | null }>(
+export function applyRankAdjustments<T extends { relevance: number | null }>(
   ranked: readonly T[],
-  impact: (entry: T) => number,
-  weight: number,
+  adjustments: RankAdjustments<T>,
 ): T[] {
+  const { impact, impactWeight = 0, penalty } = adjustments;
   return ranked
-    .map((entry) => ({ entry, score: (entry.relevance ?? 0) + impact(entry) * weight }))
+    .map((entry) => ({
+      entry,
+      score:
+        (entry.relevance ?? 0) + (impact?.(entry) ?? 0) * impactWeight - (penalty?.(entry) ?? 0),
+    }))
     .sort((left, right) => right.score - left.score)
     .map(({ entry }) => entry);
 }

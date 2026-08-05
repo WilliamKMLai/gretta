@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  applyImpactBoost,
+  applyRankAdjustments,
   cosineSimilarity,
   embeddableText,
   lexicalOverlap,
@@ -140,7 +140,7 @@ describe('lexicalOverlap', () => {
   });
 });
 
-describe('applyImpactBoost', () => {
+describe('applyRankAdjustments', () => {
   interface Item {
     id: string;
     relevance: number | null;
@@ -150,37 +150,43 @@ describe('applyImpactBoost', () => {
   const byImpactField = (entry: Item): number => entry.impact;
 
   it('lets high impact win a close relevance call', () => {
-    const ranked = applyImpactBoost<Item>(
+    const ranked = applyRankAdjustments<Item>(
       [
         { id: 'a', relevance: 0.5, impact: 0 },
         { id: 'b', relevance: 0.45, impact: 1 },
       ],
-      byImpactField,
-      0.2,
+      {
+        impact: byImpactField,
+        impactWeight: 0.2,
+      },
     );
     expect(ranked.map((entry) => entry.id)).toEqual(['b', 'a']);
   });
 
   it('does not let maximum impact override a large relevance gap', () => {
-    const ranked = applyImpactBoost<Item>(
+    const ranked = applyRankAdjustments<Item>(
       [
         { id: 'relevant', relevance: 0.9, impact: 0 },
         { id: 'cited', relevance: 0.3, impact: 1 },
       ],
-      byImpactField,
-      0.2,
+      {
+        impact: byImpactField,
+        impactWeight: 0.2,
+      },
     );
     expect(ranked.map((entry) => entry.id)).toEqual(['relevant', 'cited']);
   });
 
   it('treats zero impact as neutral, not a penalty, among equally relevant candidates', () => {
-    const ranked = applyImpactBoost<Item>(
+    const ranked = applyRankAdjustments<Item>(
       [
         { id: 'first', relevance: 0.5, impact: 0 },
         { id: 'second', relevance: 0.5, impact: 0 },
       ],
-      byImpactField,
-      0.2,
+      {
+        impact: byImpactField,
+        impactWeight: 0.2,
+      },
     );
     expect(ranked.map((entry) => entry.id)).toEqual(['first', 'second']);
   });
@@ -190,8 +196,55 @@ describe('applyImpactBoost', () => {
       { id: 'a', relevance: 0.1, impact: 0 },
       { id: 'b', relevance: 0.9, impact: 0 },
     ];
-    applyImpactBoost<Item>(items, byImpactField, 0.2);
+    applyRankAdjustments<Item>(items, { impact: byImpactField, impactWeight: 0.2 });
     expect(items.map((entry) => entry.id)).toEqual(['a', 'b']);
+  });
+
+  it('subtracts the penalty at full strength, not scaled by the impact weight', () => {
+    // Load-bearing: a demotion for what a record *is* must not weaken as the
+    // citation weight is turned down, or setting that weight to 0 would also
+    // stop supplementary material being demoted (ADR-029, sixth amendment).
+    const ranked = applyRankAdjustments<Item>(
+      [
+        { id: 'supplementary', relevance: 0.9, impact: 0 },
+        { id: 'paper', relevance: 0.6, impact: 0 },
+      ],
+      {
+        impact: byImpactField,
+        impactWeight: 0,
+        penalty: (entry) => (entry.id === 'supplementary' ? 0.5 : 0),
+      },
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['paper', 'supplementary']);
+  });
+
+  it('composes boost and penalty in one pass rather than letting the last sort win', () => {
+    // If these were applied as two successive sorts, the second would rescore
+    // from `relevance` alone and throw the boost away. `boosted` only stays on
+    // top if both terms are in the same score.
+    const ranked = applyRankAdjustments<Item>(
+      [
+        { id: 'plain', relevance: 0.5, impact: 0 },
+        { id: 'boosted', relevance: 0.45, impact: 1 },
+      ],
+      {
+        impact: byImpactField,
+        impactWeight: 0.6,
+        penalty: () => 0.2,
+      },
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['boosted', 'plain']);
+  });
+
+  it('leaves the relevance order alone when neither term is supplied', () => {
+    const ranked = applyRankAdjustments<Item>(
+      [
+        { id: 'high', relevance: 0.9, impact: 1 },
+        { id: 'low', relevance: 0.2, impact: 1 },
+      ],
+      {},
+    );
+    expect(ranked.map((entry) => entry.id)).toEqual(['high', 'low']);
   });
 });
 

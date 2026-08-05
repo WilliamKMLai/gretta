@@ -58,7 +58,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // raise it per search from the Advanced panel when a topic needs a wider net.
   litResultsPerSource: 20,
   litMinVenueCitedness: 0.2,
-  litCitationImpactWeight: 0.25,
+  /*
+   * 0.6, up from 0.25 (ADR-029, fifth amendment). At 0.25 the boost was a
+   * tie-break; at 0.6 a well-cited result can close a 0.46 relevance gap,
+   * which on real cosine distributions moves a paper from the bottom of a
+   * twenty-result list to the top. That is the intent — citation count is now
+   * a first-class ranking axis rather than a nudge. 0 still turns it off.
+   */
+  litCitationImpactWeight: 0.6,
 };
 
 /** Persistence-boundary validation; UI-level range validation is Phase 9. */

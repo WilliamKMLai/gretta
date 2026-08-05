@@ -153,6 +153,27 @@ describe('LiteraturePanel', () => {
     expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
   });
 
+  it('warns about a source that failed without presenting the search as broken', () => {
+    // ADR-032: partial results plus a named failure, not an error banner over
+    // an empty list. The source name is the actionable part — whether a
+    // missing PubMed matters depends on what the user is writing about.
+    useLiteratureStore.setState({
+      phase: 'done',
+      failedSources: [{ source: 'PubMed', message: 'HTTP 500' }],
+    });
+
+    render(wrap(<LiteraturePanel />));
+    expect(screen.getByText(/PubMed \(HTTP 500\) could not be reached/i)).toBeVisible();
+    expect(screen.getByText(/results below are from the sources that did answer/i)).toBeVisible();
+  });
+
+  it('says nothing when every source answered', () => {
+    useLiteratureStore.setState({ phase: 'done', failedSources: [] });
+
+    render(wrap(<LiteraturePanel />));
+    expect(screen.queryByText(/could not be reached/i)).toBeNull();
+  });
+
   it('refuses to send a query over the character cap', () => {
     useLiteratureStore.setState({ draft: 'a'.repeat(300), phase: 'ready' });
 

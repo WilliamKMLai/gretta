@@ -37,14 +37,14 @@ describe('LiteratureAdvancedParams', () => {
     expect(useSettingsStore.getState().litResultsPerSource).toBe(20);
   });
 
-  it('exposes the citation-impact weight as a tunable field, defaulting to 0.25', async () => {
+  it('exposes the citation-impact weight as a tunable field, defaulting to 0.6', async () => {
     const user = userEvent.setup();
 
     render(wrap(<LiteratureAdvancedParams />));
     await user.click(screen.getByRole('button', { name: /advanced search parameters/i }));
 
     const input = screen.getByRole('spinbutton', { name: /citation impact weight/i });
-    expect(input).toHaveValue('0.25');
+    expect(input).toHaveValue('0.6');
 
     await user.clear(input);
     await user.type(input, '0.5');

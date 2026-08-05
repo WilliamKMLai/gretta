@@ -37,6 +37,20 @@ export interface SourceQuery {
   note?: string | undefined;
 }
 
+/**
+ * A source that was queried and did not answer (ADR-032).
+ *
+ * Named, not counted. "Some results may be missing" is unactionable; "PubMed
+ * could not be reached" tells a user running a biomedical search that the
+ * result set is missing the source that mattered, and tells a user running a
+ * methods search that they can ignore it. Only they can make that call, and
+ * only if the pane says which host failed.
+ */
+export interface FailedSource {
+  source: string;
+  message: string;
+}
+
 export interface LiteratureState {
   phase: LiteraturePhase;
   /** The captured document text. Never transmitted; embedded locally. */
@@ -61,6 +75,12 @@ export interface LiteratureState {
   rankingNote: string | null;
   /** Per-source record of what was transmitted, shown on request. */
   sentQueries: SourceQuery[];
+  /**
+   * Sources that were asked and did not answer. Non-empty alongside real
+   * results is the ordinary partial-failure state (ADR-032) — a warning, not
+   * an error. Only an all-sources failure sets `error`.
+   */
+  failedSources: FailedSource[];
   error: string | null;
 
   setPassage: (passage: string) => void;
@@ -68,12 +88,18 @@ export interface LiteratureState {
   setFromYear: (fromYear: number | null) => void;
   setPhase: (phase: LiteraturePhase) => void;
   setError: (error: string | null) => void;
+  /**
+   * One write, not two. `failedSources` travels with the results it qualifies
+   * so there is no render in between where the list is on screen without the
+   * warning that explains why it is short.
+   */
   setResults: (
     results: AssessedRecord[],
     ranking: RankingMode,
     hiddenCount: number,
     rankingNote: string | null,
     sentQueries: SourceQuery[],
+    failedSources: FailedSource[],
   ) => void;
   reset: () => void;
 }
@@ -88,6 +114,7 @@ const EMPTY = {
   hiddenCount: 0,
   rankingNote: null as string | null,
   sentQueries: [] as SourceQuery[],
+  failedSources: [] as FailedSource[],
   error: null as string | null,
 };
 
@@ -120,8 +147,17 @@ export const useLiteratureStore = create<LiteratureState>()((set) => ({
   setError: (error) => {
     set(error === null ? { error: null } : { error, phase: 'error' });
   },
-  setResults: (results, ranking, hiddenCount, rankingNote, sentQueries) => {
-    set({ results, ranking, hiddenCount, rankingNote, sentQueries, phase: 'done', error: null });
+  setResults: (results, ranking, hiddenCount, rankingNote, sentQueries, failedSources) => {
+    set({
+      results,
+      ranking,
+      hiddenCount,
+      rankingNote,
+      sentQueries,
+      failedSources,
+      phase: 'done',
+      error: null,
+    });
   },
   reset: () => {
     set(EMPTY);

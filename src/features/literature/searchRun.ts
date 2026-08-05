@@ -87,9 +87,9 @@ export function onlyIfCurrent(
   controller: AbortController,
   setResults: LiteratureState['setResults'],
 ): LiteratureState['setResults'] {
-  return (results, ranking, hiddenCount, rankingNote, sentQueries) => {
+  return (results, ranking, hiddenCount, rankingNote, sentQueries, failedSources) => {
     if (isCurrent(controller)) {
-      setResults(results, ranking, hiddenCount, rankingNote, sentQueries);
+      setResults(results, ranking, hiddenCount, rankingNote, sentQueries, failedSources);
     }
   };
 }

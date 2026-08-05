@@ -44,7 +44,7 @@ import type {
   UpdateStatus,
   WorkUpdate,
 } from '../../types/literature';
-import type { RankingMode, SourceQuery } from './literature.store';
+import type { FailedSource, RankingMode, SourceQuery } from './literature.store';
 
 /** ADR-028: a day is long enough to reward re-visiting a passage, short enough
  * that results don't go stale against a literature that keeps publishing. */
@@ -176,6 +176,11 @@ const SourceQuerySchema = z.object({
   note: z.string().optional(),
 }) satisfies ZodType<SourceQuery>;
 
+const FailedSourceSchema = z.object({
+  source: z.string(),
+  message: z.string(),
+}) satisfies ZodType<FailedSource>;
+
 const RankingModeSchema = z.enum([
   'semantic',
   'lexical',
@@ -190,6 +195,17 @@ const CacheEntrySchema = z.object({
   hiddenCount: z.number(),
   rankingNote: z.string().nullable(),
   sentQueries: z.array(SourceQuerySchema),
+  /**
+   * Sources that failed on the search that produced this entry (ADR-032), so
+   * reusing it reproduces the same warning rather than presenting a degraded
+   * result set as a complete one.
+   *
+   * Defaulted rather than required: entries written before this field existed
+   * must stay readable. A default of `[]` is also the honest reading of
+   * them — they were written by a build that could not have recorded a partial
+   * failure, because a partial failure was a total one.
+   */
+  failedSources: z.array(FailedSourceSchema).default([]),
   /**
    * Denormalized copy of what went into `cacheKey`, kept alongside it rather
    * than parsed back out of it — the key's `JSON.stringify` shape is an
@@ -208,6 +224,12 @@ const CacheEntrySchema = z.object({
 const CachePayloadSchema = z.object({ entries: z.array(CacheEntrySchema) });
 
 export type CacheEntry = z.infer<typeof CacheEntrySchema>;
+/**
+ * The write-side shape. Differs from `CacheEntry` only in that defaulted
+ * fields are optional, so a caller that predates a field — or a fixture that
+ * does not care about one — still type-checks, and `readCache` fills it in.
+ */
+type CacheEntryInput = z.input<typeof CacheEntrySchema>;
 
 /**
  * Stable cache key over exactly the inputs that change what would be sent:
@@ -256,7 +278,7 @@ async function readPayload(): Promise<CacheEntry[]> {
   return payload?.entries ?? [];
 }
 
-async function writePayload(entries: readonly CacheEntry[]): Promise<void> {
+async function writePayload(entries: readonly CacheEntryInput[]): Promise<void> {
   await storageService.set(STORAGE_KEYS.literatureCache, { entries });
 }
 
@@ -289,7 +311,7 @@ export async function readCache(key: string): Promise<CacheEntry | null> {
  */
 export async function writeCache(
   key: string,
-  payload: Omit<CacheEntry, 'key' | 'storedAt'>,
+  payload: Omit<CacheEntryInput, 'key' | 'storedAt'>,
 ): Promise<void> {
   const existing = await readPayload();
   const withoutKey = existing.filter((candidate) => candidate.key !== key);

@@ -7,6 +7,13 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- Literature sources are now queried in parallel rather than one after another, so a search
+  takes about as long as the slowest source instead of the sum of all four (ADR-032). A
+  source that fails no longer discards the results from the ones that succeeded: the pane
+  shows what did arrive plus a warning naming the source that did not, and only a
+  total failure of every enabled source is reported as an error. Enrichment and the
+  retraction check run together for the same reason; a failed retraction lookup leaves
+  results marked "not checked" rather than implying they are clean.
 - A Cancel button in the Literature panel, shown while a search or a query draft is running.
   A search fans out across four scholarly APIs, then enriches, then checks retractions, then
   ranks locally; until now the only way out of one was to reload the pane. Cancelling is
@@ -39,6 +46,27 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Fixed
 
+- Citation count barely affected literature ranking, because the signal behind it was
+  usually missing. Ranking read OpenAlex's `citedByPercentileYear`, which is null for most
+  preprints and recent deposits, and treated null as zero impact — so a 2025 preprint with
+  59 citations and a 2026 deposit with none both scored zero and the boost cancelled out.
+  Impact is now derived from the raw citation count on a log curve, which is present
+  whenever OpenAlex is, and the default weight rises from 0.25 to 0.6. Citation count is
+  now a first-class ranking axis rather than a tie-break: a well-cited paper can overtake a
+  somewhat more relevant uncited one, while a wholly irrelevant paper still cannot win on
+  citations alone. Zero citations remains zero impact. Existing installs that never changed
+  the weight are migrated to the new default; a value you set yourself is left alone,
+  including 0, which still turns the boost off entirely (ADR-029).
+- Supplementary deposits — Figshare-style datasets, issue covers and other front matter,
+  standalone erratum notices — could outrank the papers they accompany, since ranking had no
+  notion of what kind of record it was ordering. They are now demoted by work type, with
+  OpenAlex's own "not a research work" flag weighted hardest (ADR-029). Editorials and
+  perspectives are only lightly demoted — enough to prefer a research article when both match
+  a passage equally well, not enough to push real commentary out of contention. Preprints are
+  not demoted at all, since bioRxiv and medRxiv are sources you can turn on deliberately, and
+  neither is a record whose type is simply unknown. Nothing is filtered out: a dataset that strongly
+  matches your passage still ranks above a weakly matching article, so searching for one on
+  purpose still works.
 - A literature cache hit skipped the network but still re-embedded the passage and every
   candidate through Ollama on every repeat search, leaving the perceived speedup negligible.
   An exact repeat — same query, sources, filters, and selected passage — now reuses the

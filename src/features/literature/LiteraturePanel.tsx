@@ -30,6 +30,7 @@ import { MAX_QUERY_CHARS } from '../../services/literature';
 import { EmptyState } from '../../components/EmptyState';
 import { useSettingsStore } from '../settings';
 import { useLiteratureStore } from './literature.store';
+import type { FailedSource } from './literature.store';
 import { useLiteratureSearch } from './useLiteratureSearch';
 import { LiteratureAdvancedParams } from './LiteratureAdvancedParams';
 import { LiteratureHistoryList } from './LiteratureHistoryList';
@@ -103,9 +104,22 @@ const useStyles = makeStyles({
   },
 });
 
+/**
+ * Names the sources that failed, with their reasons. The message text is
+ * carried rather than summarised: "PubMed could not be reached" and "PubMed
+ * returned HTTP 429" call for different responses from the user — wait, or
+ * try again now — and collapsing them into one sentence loses that.
+ */
+function describeFailures(failures: readonly FailedSource[]): string {
+  const named = failures.map((failure) => `${failure.source} (${failure.message})`).join('; ');
+  return failures.length === 1
+    ? `${named} could not be reached.`
+    : `These sources could not be reached: ${named}.`;
+}
+
 export function LiteraturePanel(): ReactElement {
   const styles = useStyles();
-  const { phase, passage, draft, error, results, setDraft } = useLiteratureStore();
+  const { phase, passage, draft, error, results, failedSources, setDraft } = useLiteratureStore();
   const { captureAndDraft, search, cancel, busy } = useLiteratureSearch();
   const litEnabled = useSettingsStore((state) => state.litEnabled);
   const sources = useSettingsStore((state) => state.litSources);
@@ -231,6 +245,20 @@ export function LiteraturePanel(): ReactElement {
       {error === null ? null : (
         <MessageBar className={styles.fixed} intent="error" layout="multiline">
           <MessageBarBody>{error}</MessageBarBody>
+        </MessageBar>
+      )}
+
+      {/*
+       * A warning, not an error (ADR-032): these results are real and usable,
+       * they are just incomplete. The failing sources are named because that is
+       * the part the user can act on — whether a missing PubMed matters depends
+       * entirely on what they are writing about, and only they can judge it.
+       */}
+      {failedSources.length === 0 ? null : (
+        <MessageBar className={styles.fixed} intent="warning" layout="multiline">
+          <MessageBarBody>
+            {describeFailures(failedSources)} Results below are from the sources that did answer.
+          </MessageBarBody>
         </MessageBar>
       )}
 
