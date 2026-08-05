@@ -8,10 +8,10 @@
  */
 import type { HostPlatform } from '../../types/domain';
 
-/** Where the app is running, resolved once at startup via `Office.onReady`. */
 /** Simplified host theme classification (ADR-013b). */
 export type OfficeThemeKind = 'light' | 'dark';
 
+/** Where the app is running, resolved once at startup via `Office.onReady`. */
 export interface HostInfo {
   /** True only when hosted inside Word with Office.js ready. */
   available: boolean;

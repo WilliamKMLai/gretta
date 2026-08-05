@@ -41,8 +41,7 @@ const parser = new XMLParser({
   attributeNamePrefix: '@',
   parseTagValue: false,
   trimValues: true,
-  // Entity expansion stays off, so a hostile payload cannot be walked into a
-  // billion-laughs expansion.
+  // Entity expansion stays off — see the file header (billion-laughs).
   processEntities: false,
   /**
    * Titles and abstracts are *mixed content* — prose with `<i>`, `<sup>`, and

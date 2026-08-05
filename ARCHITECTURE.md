@@ -176,20 +176,25 @@ gretta/
 ├─ manifest/
 │  └─ manifest.xml                 # add-in only (XML) manifest → https://localhost:3000
 ├─ public/assets/                  # icon-16/32/80.png, logo
+├─ docs/
+│  └─ SIDELOADING.md                # per-platform sideloading instructions
 ├─ scripts/
 │  ├─ ollama-https-proxy.mjs       # macOS mixed-content workaround (§4)
 │  ├─ dev-mac.mjs                  # one-command Mac loader: sideload + dev + proxy + kb
-│  ├─ kb/                          # knowledge-base companion (ADR-020), run via type-stripping
-│  │  ├─ server.mts                # HTTP(S) API: collections CRUD, reindex, status stream, query
-│  │  ├─ registry.mts              # collection registry + debounced file watchers
-│  │  ├─ index-store.mts           # incremental scan → parse → chunk → embed → store
-│  │  ├─ store.sqlite.mts          # durable chunks/vectors keyed by (collection, path, hash)
-│  │  ├─ parse.mts                 # pdf.js (page locators) / mammoth (¶ locators) / text
-│  │  ├─ chunk.mts                 # pure structural chunker (provenance-preserving)
-│  │  ├─ score.mts                 # pure cosine + top-k ranking
-│  │  ├─ embedder.mts              # Ollama embeddings + deterministic offline seam
-│  │  └─ progress.mts              # NDJSON progress encode/parse
-│  └─ sideload.md                  # per-platform sideloading instructions
+│  ├─ setup.mjs                    # first-run project setup
+│  ├─ boot-smoke.mjs               # smoke-tests the dev boot sequence
+│  └─ kb/                          # knowledge-base companion (ADR-020), run via type-stripping
+│     ├─ server.mts                # HTTP(S) API: collections CRUD, reindex, status stream, query
+│     ├─ http.mts                  # CORS/JSON helpers shared by server.mts and its tests
+│     ├─ registry.mts              # collection registry + debounced file watchers
+│     ├─ index-store.mts           # incremental scan → parse → chunk → embed → store
+│     ├─ store.sqlite.mts          # durable chunks/vectors keyed by (collection, path, hash)
+│     ├─ parse.mts                 # pdf.js (page locators) / mammoth (¶ locators) / text
+│     ├─ chunk.mts                 # pure structural chunker (provenance-preserving)
+│     ├─ score.mts                 # pure cosine + top-k ranking
+│     ├─ embedder.mts              # Ollama embeddings + deterministic offline seam
+│     ├─ progress.mts              # NDJSON progress encode/parse
+│     └─ pick-folder.mts           # native OS folder-picker dialog (ADR-033)
 ├─ taskpane.html                   # Vite entry → src/main.tsx
 ├─ commands.html                   # minimal function-command runtime (manifest requirement)
 ├─ src/

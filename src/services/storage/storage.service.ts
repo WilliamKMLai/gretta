@@ -119,7 +119,7 @@ export function createLocalStorageService(backing?: StorageBacking): StorageServ
         return Promise.reject(
           new StorageError(
             'quota-exceeded',
-            'Saving failed — local storage is full or unavailable. Delete old conversations to free space.',
+            'Saving failed — local storage is full or unavailable. Delete old history to free space.',
             cause,
           ),
         );

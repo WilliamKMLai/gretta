@@ -1,2 +1,2 @@
-/** Stable unique ids for domain entities (conversations, messages, prompts). */
+/** Stable unique ids for domain entities (generation records, prompts). */
 export const newId = (): string => crypto.randomUUID();

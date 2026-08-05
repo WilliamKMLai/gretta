@@ -45,7 +45,6 @@ const useStyles = makeStyles({
   section: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   dataDir: { color: tokens.colorNeutralForeground3, wordBreak: 'break-all' },
   addRow: { display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'flex-end' },
-  grow: { flexGrow: 1 },
   muted: { color: tokens.colorNeutralForeground3 },
 });
 

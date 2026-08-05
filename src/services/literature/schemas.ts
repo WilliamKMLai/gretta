@@ -74,7 +74,6 @@ const MessageListSchema = z.object({
 });
 
 export type CrossrefWork = z.infer<typeof WorkSchema>;
-export type CrossrefUpdateTo = z.infer<typeof UpdateToSchema>;
 
 export function parseWorkList(payload: unknown): CrossrefWork[] {
   const parsed = MessageListSchema.safeParse(payload);

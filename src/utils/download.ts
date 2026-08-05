@@ -1,4 +1,4 @@
-/** Triggers a client-side text-file download (conversation export). */
+/** Triggers a client-side text-file download (generation/history export). */
 export function downloadTextFile(filename: string, text: string, mimeType: string): void {
   const blob = new Blob([text], { type: mimeType });
   const url = URL.createObjectURL(blob);

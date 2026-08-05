@@ -19,11 +19,13 @@ making.
 pnpm check   # typecheck · lint · format · test · build
 ```
 
-This must pass before a change merges — it's also what CI runs on every PR. `pnpm check` is
-necessary but not sufficient: a change that touches generation, the knowledge base, history,
-or literature search should also be run live in Word. Green tests have missed real defects
-here before (context-window truncation, stream timeouts, a history pane showing the wrong
-record) that were obvious within minutes of actual use.
+This must pass before a change merges. CI runs a lighter gate on every PR — typecheck and
+the unit/component tests only, not lint/format/build — so `pnpm check` locally is what
+actually catches everything before review (see `.github/workflows/ci.yml` for why). It's
+also necessary but not sufficient: a change that touches generation, the knowledge base,
+history, or literature search should also be run live in Word. Green tests have missed real
+defects here before (context-window truncation, stream timeouts, a history pane showing the
+wrong record) that were obvious within minutes of actual use.
 
 ## Architectural changes get an ADR first
 

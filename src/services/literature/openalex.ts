@@ -65,10 +65,8 @@ export interface OpenAlexEnrichment {
   openAlexId: string | null;
   signals: OpenAlexSignals;
   /**
-   * Abstract reconstructed from OpenAlex's inverted index, or null. A live run
-   * found only one Crossref record in five carries an abstract, because deposit
-   * is optional and most publishers skip it — so this is the practical source of
-   * the text ADR-029's local re-ranker embeds.
+   * Abstract reconstructed from OpenAlex's inverted index, or null — see
+   * `fromInvertedIndex` in `openalex.schemas.ts` for why this matters.
    */
   abstract: string | null;
 }

@@ -33,14 +33,6 @@ import type {
  */
 export const NEGLIGIBLE_CITEDNESS = 0.2;
 
-/**
- * The threshold is a parameter rather than a constant because ADR-029 recorded
- * it as guessed. Exposing it in the search panel lets a beta tester tune it
- * against real result sets — including deliberately non-Anglophone ones, since
- * indexing coverage is uneven — rather than file a bug about a default nobody
- * could justify.
- */
-
 export type BadgeTone = 'positive' | 'neutral' | 'caution' | 'unchecked';
 
 /** One named check, ready to render. `detail` is the tooltip: what and whence. */

@@ -1,8 +1,6 @@
 /**
  * Connection settings (ROADMAP Phase 9): the Ollama URL, the default model
- * fed by the live installed-model list, "Test connection", and the
- * knowledge-base controls (ADR-020) — the master switch and the embedding model
- * seeded into new collections.
+ * fed by the live installed-model list, and "Test connection".
  *
  * The URL commits on blur/Enter rather than per keystroke — the store is what
  * the health poll and every Ollama call read, so committing mid-typing would

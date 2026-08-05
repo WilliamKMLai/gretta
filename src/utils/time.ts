@@ -1,4 +1,4 @@
-/** Compact relative timestamps for the conversation list. */
+/** Compact relative timestamps for history, literature, and collection lists. */
 export function formatRelativeTime(iso: string, now: Date = new Date()): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';

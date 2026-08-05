@@ -106,11 +106,6 @@ export interface CollectionStatus {
   message: string | null;
 }
 
-/** `GET /collections` — every collection the companion manages. */
-export interface KnowledgeBaseSummary {
-  collections: CollectionStatus[];
-}
-
 /** Reported by `GET /health` — the reachability probe (mirrors Ollama's). */
 export interface KnowledgeBaseHealth {
   name: 'gretta-kb';
@@ -160,23 +155,4 @@ export interface QueryDefaults {
   topK: number;
   /** Minimum cosine score for an injected chunk, 0..1. */
   minScore: number;
-}
-
-/** `POST /query` request body. */
-export interface QueryRequest {
-  query: string;
-  /** Collections to search; empty retrieves nothing (no binding → no RAG). */
-  collectionIds: string[];
-  /** Overrides the configured `topK` for this call when present. */
-  k?: number;
-}
-
-/** `POST /query` response body. Provenance carries the collection per chunk. */
-export interface QueryResponse {
-  chunks: RetrievedChunk[];
-}
-
-/** Persisted in the .docx via Office settings — which collections this doc uses. */
-export interface DocumentBinding {
-  collectionIds: string[];
 }

@@ -8,10 +8,9 @@ import type { StorageKey } from './storage.types';
 export const STORAGE_KEYS = {
   settings: 'gretta/settings',
   /**
-   * Generation history (ADR-021). The key string is deliberately still
-   * `conversations`: existing installs have data under it, and the v1 → v2
-   * migration flattens threads into records in place. Renaming the string
-   * would orphan that data.
+   * Generation history (ADR-021). The v1 → v2 migration flattens threads into
+   * records in place. Pre-rebrand installs have this data under the old
+   * `wordllama/conversations` key, which `legacy.ts` adopts once (ADR-024).
    */
   history: 'gretta/history',
   prompts: 'gretta/prompts',

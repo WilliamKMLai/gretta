@@ -12,8 +12,8 @@
  * the old value is left untouched so the previous build keeps working.
  *
  * This module is the whole compatibility surface. Delete it, its call in
- * `storage.service.ts`, and `LEGACY_BINDING_KEY` in the knowledge-base feature
- * for a clean break with no history.
+ * `storage.service.ts`, and `LEGACY_KB_BINDING_KEY` in the knowledge-base
+ * feature for a clean break with no history.
  */
 import type { StorageKey } from './storage.types';
 

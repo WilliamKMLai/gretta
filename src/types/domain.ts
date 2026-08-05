@@ -31,21 +31,6 @@ export interface GenerationStats {
   tokensPerSecond: number;
 }
 
-/** A single chat message. Retained for request building and exports. */
-export interface ChatMessage {
-  /** Stable unique id (ULID-style, generated client-side). */
-  id: string;
-  role: Role;
-  /** Plain text. Model output is treated strictly as data (ADR-007). */
-  content: string;
-  /** ISO 8601 creation timestamp. */
-  createdAt: string;
-  /** Model that produced this message; present on assistant messages. */
-  model?: string;
-  /** Generation metadata; present on completed assistant messages. */
-  stats?: GenerationStats;
-}
-
 /** How a generation ended — recorded so partial results stay explicable. */
 export type GenerationOutcome = 'completed' | 'cancelled' | 'error';
 
