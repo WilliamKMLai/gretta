@@ -116,6 +116,29 @@ describe('stripLatex', () => {
   it('treats the whole file as body when there is no \\begin{document}', () => {
     expect(stripLatex('Just a fragment with \\emph{emphasis}.')).toBe('Just a fragment with emphasis.');
   });
+
+  it('keeps a table/figure caption but drops the tabular/tikz source around it', () => {
+    const source = [
+      '\\begin{table}[h]',
+      '\\centering',
+      '\\caption{Hyperparameter grid used for tuning.}',
+      '\\begin{tabular}{ll}',
+      'Learning rate & 0.001, 0.01, 0.1 \\\\',
+      '\\end{tabular}',
+      '\\end{table}',
+    ].join('\n');
+    const stripped = stripLatex(source);
+    expect(stripped).toContain('Hyperparameter grid used for tuning.');
+    expect(stripped).not.toContain('Learning rate');
+    expect(stripped).not.toContain('tabular');
+  });
+
+  it('drops an unclosed figure/table but still keeps its caption', () => {
+    const stripped = stripLatex('Before.\n\\begin{figure}\n\\caption{A lost figure.}\nraw junk');
+    expect(stripped).toContain('Before.');
+    expect(stripped).toContain('A lost figure.');
+    expect(stripped).not.toContain('raw junk');
+  });
 });
 
 describe('blocksFromBibtex', () => {

@@ -188,20 +188,47 @@ const NON_PROSE_ENVIRONMENTS = [
 ];
 
 /**
+ * Pulls `\caption{...}` text out of a dropped environment's body before the
+ * rest of it is discarded. Captions are the one part of a figure/table that
+ * is ordinary prose describing what the content *is* — often the exact
+ * sentence a retrieval query like "what was the hyperparameter grid" is
+ * looking for — so they're kept as their own paragraph even though the
+ * tabular/tikz/math source around them is noise.
+ */
+function extractCaptions(body: string): string {
+  const captions: string[] = [];
+  const pattern = /\\caption\*?(?:\[[^\]]*\])?\s*\{/gu;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(body)) !== null) {
+    const openBrace = match.index + match[0].length - 1;
+    const arg = extractBraceArg(body, openBrace);
+    if (!arg) break; // unbalanced — nothing more to recover from this point
+    if (arg.content.trim() !== '') captions.push(arg.content);
+    pattern.lastIndex = arg.end;
+  }
+  return captions.length === 0 ? '' : `\n\n${captions.join('\n\n')}\n\n`;
+}
+
+/**
  * Drops each blocklisted environment's `\begin{name}...\end{name}` span,
- * content included — math source and figure/table markup pollute retrieval
- * more than they help. An unclosed instance strips from `\begin{name}` to
- * end of the (already document-scoped) text: erring toward removing more
- * rather than leaking raw verbatim/tikz source as if it were prose.
+ * content included except for any `\caption{...}` — math source and
+ * figure/table markup pollute retrieval more than they help, but captions
+ * are kept (see `extractCaptions`). An unclosed instance strips from
+ * `\begin{name}` to end of the (already document-scoped) text: erring
+ * toward removing more rather than leaking raw verbatim/tikz source as if
+ * it were prose.
  */
 function dropEnvironments(text: string, names: readonly string[]): string {
   let result = text;
   for (const name of names) {
     result = result.replace(
-      new RegExp(`\\\\begin\\{${name}\\*?\\}[\\s\\S]*?\\\\end\\{${name}\\*?\\}`, 'gu'),
-      '',
+      new RegExp(`\\\\begin\\{${name}\\*?\\}([\\s\\S]*?)\\\\end\\{${name}\\*?\\}`, 'gu'),
+      (_whole, body: string) => extractCaptions(body),
     );
-    result = result.replace(new RegExp(`\\\\begin\\{${name}\\*?\\}[\\s\\S]*$`, 'u'), '');
+    result = result.replace(
+      new RegExp(`\\\\begin\\{${name}\\*?\\}([\\s\\S]*)$`, 'u'),
+      (_whole, body: string) => extractCaptions(body),
+    );
   }
   return result;
 }

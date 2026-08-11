@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -162,6 +162,29 @@ describe('CollectionIndexer query-matrix caching', () => {
     expect(store.replaceFile).toHaveBeenCalled();
     await indexer.query('hello');
     expect(store.chunkVectors).toHaveBeenCalledTimes(2);
+  });
+
+  it('reindex() recurses into sub-folders, not just the top-level folder', async () => {
+    vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    mkdirSync(join(dir, 'sub', 'deeper'), { recursive: true });
+    writeFileSync(join(dir, 'sub', 'deeper', 'nested.txt'), 'Nested content.');
+    const store = createFakeStore({ fileHash: null });
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://x',
+    );
+
+    await indexer.reindex();
+
+    expect(store.replaceFile).toHaveBeenCalledWith(
+      'a',
+      'sub/deeper/nested.txt',
+      expect.any(String),
+      expect.anything(),
+    );
   });
 
   it('maps ranked matches back to RetrievedChunk, preserving score order', async () => {
