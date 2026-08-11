@@ -113,11 +113,14 @@ If any step doesn't match what's described, see Troubleshooting below.
 
 ## What gets indexed
 
-| Type                       | Citation granularity |
-| -------------------------- | -------------------- |
-| `.pdf`                     | page number          |
-| `.docx`                    | paragraph            |
-| `.txt`, `.md`, `.markdown` | paragraph            |
+| Type                                                              | Citation granularity                                    |
+| ----------------------------------------------------------------- | -------------------------------------------------------- |
+| `.pdf`                                                            | page number                                              |
+| `.docx`                                                           | paragraph                                                |
+| `.txt`, `.md`, `.markdown`, `.rst`, `.org`, `.adoc`, `.asciidoc` | paragraph                                                |
+| `.tex`                                                            | paragraph (after stripping LaTeX markup; math, figures, and tables are excluded) |
+| `.bib`                                                            | per bibliography entry                                   |
+| `.html`, `.htm`                                                   | paragraph (after stripping tags)                          |
 
 Subfolders are included. Scanned PDFs with no text layer are skipped with a reason (there
 is no OCR). Anything skipped is listed in the panel so you know what was left out.

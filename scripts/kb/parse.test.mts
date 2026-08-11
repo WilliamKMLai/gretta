@@ -2,14 +2,37 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { blocksFromPdfPage, blocksFromPlainText, isSupported, parseFile } from './parse.mts';
+import {
+  blocksFromBibtex,
+  blocksFromPdfPage,
+  blocksFromPlainText,
+  isSupported,
+  parseFile,
+  stripHtml,
+  stripLatex,
+} from './parse.mts';
 
 describe('isSupported', () => {
   it('accepts the documented formats and rejects others', () => {
-    for (const name of ['a.txt', 'b.md', 'c.markdown', 'd.pdf', 'e.docx', 'F.PDF']) {
+    for (const name of [
+      'a.txt',
+      'b.md',
+      'c.markdown',
+      'd.pdf',
+      'e.docx',
+      'F.PDF',
+      'f.tex',
+      'g.bib',
+      'h.html',
+      'i.htm',
+      'j.rst',
+      'k.org',
+      'l.adoc',
+      'm.asciidoc',
+    ]) {
       expect(isSupported(name)).toBe(true);
     }
-    for (const name of ['a.key', 'b.pages', 'c', 'd.doc', 'e.pdf.bak']) {
+    for (const name of ['a.key', 'b.pages', 'c', 'd.doc', 'e.pdf.bak', 'f.xhtml', 'g.biblatex']) {
       expect(isSupported(name)).toBe(false);
     }
   });
@@ -48,6 +71,115 @@ describe('blocksFromPdfPage', () => {
   });
 });
 
+describe('stripLatex', () => {
+  it('drops the preamble, unwraps sections and inline commands, strips comments/refs/math', () => {
+    const source = [
+      '\\documentclass{article}',
+      '\\usepackage{amsmath}',
+      '\\begin{document}',
+      '\\section{Introduction}',
+      '% a comment nobody should see',
+      'This is \\emph{important} background, see \\cite{foo} and \\ref{eq:1}.',
+      '\\begin{equation}',
+      'E = mc^2',
+      '\\end{equation}',
+      'Conclusion follows.',
+      '\\end{document}',
+    ].join('\n');
+    const stripped = stripLatex(source);
+    expect(stripped).toContain('Introduction');
+    expect(stripped).toContain('important');
+    expect(stripped).toContain('Conclusion follows.');
+    expect(stripped).not.toContain('\\section');
+    expect(stripped).not.toContain('\\emph');
+    expect(stripped).not.toContain('documentclass');
+    expect(stripped).not.toContain('comment nobody');
+    expect(stripped).not.toContain('\\cite');
+    expect(stripped).not.toContain('\\ref');
+    expect(stripped).not.toContain('mc^2');
+  });
+
+  it('unwraps nested inline commands', () => {
+    expect(stripLatex('\\textbf{Bold \\emph{and italic}} text')).toBe('Bold and italic text');
+  });
+
+  it('returns effectively empty output for a comment-only file', () => {
+    expect(stripLatex('% just a comment\n% another')).toBe('');
+  });
+
+  it('strips an unclosed environment to the end rather than leaking its content', () => {
+    const stripped = stripLatex('Before.\n\\begin{verbatim}\nsome raw code\n');
+    expect(stripped).toContain('Before.');
+    expect(stripped).not.toContain('some raw code');
+  });
+
+  it('treats the whole file as body when there is no \\begin{document}', () => {
+    expect(stripLatex('Just a fragment with \\emph{emphasis}.')).toBe('Just a fragment with emphasis.');
+  });
+});
+
+describe('blocksFromBibtex', () => {
+  it('parses brace- and quote-delimited entries into one block each', () => {
+    const bib = [
+      '@article{doe2020,',
+      '  title = {A Study of Things},',
+      '  author = {Jane Doe},',
+      '  year = {2020},',
+      '}',
+      '',
+      '@book{smith1999,',
+      '  title = "Another Book",',
+      '  author = "John Smith",',
+      '}',
+    ].join('\n');
+    const blocks = blocksFromBibtex(bib);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]?.paragraph).toBe(1);
+    expect(blocks[0]?.text).toContain('A Study of Things');
+    expect(blocks[0]?.text).toContain('Jane Doe');
+    expect(blocks[1]?.paragraph).toBe(2);
+    expect(blocks[1]?.text).toContain('Another Book');
+  });
+
+  it('handles nested braces inside a field value', () => {
+    const blocks = blocksFromBibtex('@article{k,\n  title = {The {Quick} Brown Fox},\n}');
+    expect(blocks[0]?.text).toContain('Quick');
+  });
+
+  it('skips entries with no indexed fields', () => {
+    const blocks = blocksFromBibtex('@article{k,\n  doi = {10.1/xyz},\n  url = {http://example.com},\n}');
+    expect(blocks).toEqual([]);
+  });
+
+  it('ignores @comment and @string entries', () => {
+    const bib = '@comment{ignore me}\n@string{foo = "bar"}\n@article{k,\n  title = {Real Entry},\n}';
+    const blocks = blocksFromBibtex(bib);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.text).toContain('Real Entry');
+  });
+});
+
+describe('stripHtml', () => {
+  it('drops script/style content and produces paragraph breaks at block tags', () => {
+    const html = '<html><head><style>body{color:red}</style><script>alert(1)</script></head>' +
+      '<body><h1>Title</h1><p>First paragraph.</p><p>Second paragraph.</p></body></html>';
+    const stripped = stripHtml(html);
+    expect(stripped).not.toContain('color:red');
+    expect(stripped).not.toContain('alert(1)');
+    const blocks = blocksFromPlainText(stripped);
+    expect(blocks.map((b) => b.text)).toEqual(['Title', 'First paragraph.', 'Second paragraph.']);
+  });
+
+  it('decodes named, decimal, and hex entities', () => {
+    expect(stripHtml('Fish &amp; chips &#65; &#x42;&nbsp;end')).toBe('Fish & chips A B end');
+  });
+
+  it('leaves unclosed tags as harmless noise instead of throwing', () => {
+    expect(() => stripHtml('<p>Unclosed <b>bold text')).not.toThrow();
+    expect(stripHtml('<p>Unclosed <b>bold text')).toContain('bold text');
+  });
+});
+
 describe('parseFile', () => {
   let dir: string;
   beforeAll(() => {
@@ -55,6 +187,13 @@ describe('parseFile', () => {
     writeFileSync(join(dir, 'notes.md'), '# Title\n\nBody paragraph.');
     writeFileSync(join(dir, 'empty.txt'), '   \n  ');
     writeFileSync(join(dir, 'broken.pdf'), 'not really a pdf');
+    writeFileSync(
+      join(dir, 'paper.tex'),
+      '\\begin{document}\n\\section{Intro}\nSome findings here.\n\\end{document}',
+    );
+    writeFileSync(join(dir, 'refs.bib'), '@article{k,\n  title = {A Reference},\n  author = {A. Author},\n}');
+    writeFileSync(join(dir, 'page.html'), '<html><body><p>Hello world.</p></body></html>');
+    writeFileSync(join(dir, 'notes.rst'), 'First para.\n\nSecond para.');
   });
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
@@ -86,5 +225,35 @@ describe('parseFile', () => {
   it('reports a reason for a missing file', async () => {
     const result = await parseFile(join(dir, 'ghost.md'));
     expect(result.ok).toBe(false);
+  });
+
+  it('parses a .tex file by stripping LaTeX markup', async () => {
+    const result = await parseFile(join(dir, 'paper.tex'));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.blocks.map((b) => b.text).join(' ')).toContain('Some findings here.');
+      expect(result.blocks.every((b) => b.page === null)).toBe(true);
+    }
+  });
+
+  it('parses a .bib file into entry blocks', async () => {
+    const result = await parseFile(join(dir, 'refs.bib'));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.blocks).toHaveLength(1);
+      expect(result.blocks[0]?.text).toContain('A Reference');
+    }
+  });
+
+  it('parses a .html file by stripping tags', async () => {
+    const result = await parseFile(join(dir, 'page.html'));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.blocks[0]?.text).toBe('Hello world.');
+  });
+
+  it('parses .rst through the same plain-text path as .md', async () => {
+    const result = await parseFile(join(dir, 'notes.rst'));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.blocks).toHaveLength(2);
   });
 });
