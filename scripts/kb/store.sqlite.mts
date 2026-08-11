@@ -16,6 +16,14 @@
  * The embedding model is recorded per collection: vectors from different models
  * are not comparable, so a model change invalidates that collection's rows and
  * forces a rebuild (the guardrail behind "configurable embedding model").
+ *
+ * `tex_macro_state` (ADR-020 amendment, folder-scoped `.tex` macro expansion)
+ * records the folder macro table's fingerprint at each collection's last
+ * reindex, so index-store.mts can tell when the table changed and force a
+ * re-embed of every `.tex` file rather than trusting their individual,
+ * unchanged content hashes — a macro redefinition in one file can change
+ * what another file's chunks should say without that file's own bytes
+ * changing at all.
  */
 import DatabaseConstructor from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
@@ -78,6 +86,10 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 CREATE INDEX IF NOT EXISTS chunks_by_collection ON chunks (collectionId);
 CREATE INDEX IF NOT EXISTS chunks_by_source ON chunks (collectionId, source);
+CREATE TABLE IF NOT EXISTS tex_macro_state (
+  collectionId   TEXT PRIMARY KEY,
+  macroTableHash TEXT NOT NULL
+);
 `;
 
 /** Persisted collection row (folders stored as JSON). */
@@ -142,6 +154,7 @@ export class SqliteStore {
 
   deleteCollection(id: string): void {
     this.clearCollection(id);
+    this.db.prepare('DELETE FROM tex_macro_state WHERE collectionId = ?').run(id);
     this.db.prepare('DELETE FROM collections WHERE id = ?').run(id);
   }
 
@@ -169,6 +182,27 @@ export class SqliteStore {
       .prepare('SELECT source FROM files WHERE collectionId = ?')
       .all(collectionId) as { source: string }[];
     return rows.map((row) => row.source);
+  }
+
+  /** The folder `.tex` macro table's fingerprint as of the last reindex, or
+   * null when never recorded — a fresh collection, or one indexed before
+   * this feature existed. Either way, null is treated as "changed" by the
+   * caller, so `.tex` files get one corrective re-embed. */
+  getTexMacroHash(collectionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT macroTableHash FROM tex_macro_state WHERE collectionId = ?')
+      .get(collectionId) as { macroTableHash: string } | undefined;
+    return row?.macroTableHash ?? null;
+  }
+
+  /** Records the folder `.tex` macro table's fingerprint for this collection. */
+  setTexMacroHash(collectionId: string, hash: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO tex_macro_state (collectionId, macroTableHash) VALUES (?, ?)
+         ON CONFLICT(collectionId) DO UPDATE SET macroTableHash = excluded.macroTableHash`,
+      )
+      .run(collectionId, hash);
   }
 
   /** Replaces one file's chunks atomically and records its new hash. */

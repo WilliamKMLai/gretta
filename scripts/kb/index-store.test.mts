@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CollectionConfig, QueryDefaults } from '../../src/types/knowledgebase';
 import { CollectionIndexer, KB_MAX_CHUNKS, capacityPct } from './index-store.mts';
+import { contentHash } from './store.sqlite.mts';
 import type { ChunkRow, SqliteStore } from './store.sqlite.mts';
+import { fingerprintMacroTable } from './tex/macros.mts';
 
 /**
  * `CollectionIndexer.query()`'s ranking matrix is cached per instance and
@@ -34,6 +36,8 @@ function createFakeStore(options: { indexedSources?: string[]; fileHash?: string
     fileHash: vi.fn(() => options.fileHash ?? null),
     replaceFile: vi.fn(),
     markIndexed: vi.fn(),
+    getTexMacroHash: vi.fn(() => null as string | null),
+    setTexMacroHash: vi.fn(),
     chunkVectors: vi.fn(() => ({ matrix: new Float32Array(0), rowIds: [] as number[], dims: 0 })),
     chunksByRowIds: vi.fn((rowIds: number[]): ChunkRow[] => {
       void rowIds;
@@ -185,6 +189,52 @@ describe('CollectionIndexer query-matrix caching', () => {
       expect.any(String),
       expect.anything(),
     );
+  });
+
+  it("a changed folder .tex macro table forces a re-embed even when the file's own hash is unchanged", async () => {
+    vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    const texPath = join(dir, 'note.tex');
+    writeFileSync(texPath, '\\begin{document}\nSome unchanging prose.\n\\end{document}');
+    const store = createFakeStore({ fileHash: contentHash(readFileSync(texPath)) });
+    store.getTexMacroHash.mockReturnValue(
+      'a-fingerprint-from-a-previous-run-that-no-longer-matches',
+    );
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://x',
+    );
+
+    await indexer.reindex();
+
+    // The file's own content hash matched what was stored, yet it was still
+    // reprocessed — the whole point of the bypass.
+    expect(store.replaceFile).toHaveBeenCalled();
+    expect(store.setTexMacroHash).toHaveBeenCalledWith('a', expect.any(String));
+  });
+
+  it('an unchanged folder .tex macro table lets an unchanged .tex file skip re-embedding, same as any other format', async () => {
+    vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    const texPath = join(dir, 'note.tex');
+    writeFileSync(texPath, '\\begin{document}\nSome unchanging prose.\n\\end{document}');
+    const store = createFakeStore({ fileHash: contentHash(readFileSync(texPath)) });
+    // This file defines no macros, so the folder table is always empty and
+    // its fingerprint is stable across runs — recording that exact
+    // fingerprint as "already current" means nothing changed.
+    store.getTexMacroHash.mockReturnValue(fingerprintMacroTable(new Map()));
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://x',
+    );
+
+    await indexer.reindex();
+
+    expect(store.replaceFile).not.toHaveBeenCalled();
   });
 
   it('maps ranked matches back to RetrievedChunk, preserving score order', async () => {

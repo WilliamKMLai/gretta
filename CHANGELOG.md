@@ -52,6 +52,18 @@ All notable changes to this project are documented here. Format loosely follows
   warning explaining that retrieval will be slower and suggesting a split by topic (ADR-020),
   instead of silently degrading with no explanation. The ceiling is still advisory — indexing
   is never truncated, so nothing is silently left out of a collection's provenance.
+- `.tex` ingestion now expands macros across a folder instead of leaking them into chunk text
+  (ADR-020 amendment). Each `.tex` file is still indexed independently — there's no
+  `\input`/`\include` splicing — but `\newcommand`/`\renewcommand`/`\def` definitions are now
+  collected from every `.tex` file in the collection's folder(s) first, so a macro defined in
+  a main file's preamble resolves correctly when used in a file it includes; two files
+  defining the same macro log a warning naming both rather than silently picking one. Math
+  (`$...$`, `equation`/`align`, …) and citations/refs (`\citep`, `\ref`, …) are now kept as
+  written instead of stripped, since retrieved LaTeX source is meant to be pasted back into a
+  document; figure/table source is still dropped, but captions are kept. Editing a macro
+  definition now triggers a re-embed of every `.tex` file in the folder, not just the file
+  that changed, since a per-file content hash alone cannot see that a change elsewhere altered
+  what that file's chunks should say.
 
 ### Fixed
 

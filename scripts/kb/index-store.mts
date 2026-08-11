@@ -30,6 +30,7 @@ import { EmbedUnreachableError, createEmbedder } from './embedder.mts';
 import { isSupported, parseFile } from './parse.mts';
 import { topKPacked } from './score.mts';
 import { contentHash, type SqliteStore, type StoredChunk } from './store.sqlite.mts';
+import { buildMacroTable, fingerprintMacroTable, type MacroTable } from './tex/index.mts';
 
 /** The cached ranking matrix for one collection (ADR-020 amendment). */
 interface QueryMatrix {
@@ -172,6 +173,30 @@ export class CollectionIndexer {
       }
     }
 
+    // Pass 1 (ADR-020 amendment, folder-scoped .tex macro expansion): the
+    // folder's macro table, built once per reindex from every .tex file in
+    // scope — a macro used in one file is routinely defined in another. If
+    // the table changed since this collection's last reindex, every .tex
+    // file below is treated as changed even when its own bytes are not: a
+    // macro redefinition in main.tex changes what sections/methods.tex's
+    // chunks should say without touching sections/methods.tex at all, and
+    // per-file content hashing alone can never see that.
+    const texFiles = files.filter((file) => file.source.toLowerCase().endsWith('.tex'));
+    let texMacros: MacroTable = new Map();
+    let texTableChanged = false;
+    if (texFiles.length > 0) {
+      const built = await buildMacroTable(texFiles);
+      if (token !== this.runToken) return;
+      texMacros = built.table;
+      for (const warning of built.warnings) {
+        console.warn(`[kb:${this.config.id}] ${warning}`);
+        this.emit({ type: 'error', path: null, message: warning });
+      }
+      const fingerprint = fingerprintMacroTable(texMacros);
+      texTableChanged = this.store.getTexMacroHash(this.config.id) !== fingerprint;
+      this.store.setTexMacroHash(this.config.id, fingerprint);
+    }
+
     this.emit({ type: 'phase', phase: 'indexing' });
     let done = 0;
     for (const file of files) {
@@ -185,12 +210,14 @@ export class CollectionIndexer {
         continue;
       }
       const hash = contentHash(bytes);
-      if (this.store.fileHash(this.config.id, file.source) === hash) {
+      const isTex = file.source.toLowerCase().endsWith('.tex');
+      const unchanged = this.store.fileHash(this.config.id, file.source) === hash;
+      if (unchanged && !(isTex && texTableChanged)) {
         this.emit({ type: 'file', path: file.source, filesDone: done, totalFiles: files.length });
         continue; // unchanged — the whole point of incremental indexing
       }
 
-      const parsed = await parseFile(file.absolute);
+      const parsed = await parseFile(file.absolute, { texMacros });
       if (!parsed.ok) {
         this.skip(file.source, parsed.reason);
         continue;

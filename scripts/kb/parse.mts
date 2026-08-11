@@ -7,13 +7,32 @@
  * imported lazily so a text-only corpus never pays to load them, and a failure
  * inside one file returns a typed reason rather than throwing — the indexer
  * records it as "skipped" and keeps going.
+ *
+ * `.tex` is the one format needing more than a single file's worth of logic —
+ * folder-scoped macro expansion (DECISIONS.md ADR-020 amendment) — and lives
+ * under tex/, entered here via `parseTexFile`. `ParseContext` is how
+ * index-store.mts threads that folder's macro table in; every other format
+ * ignores it.
  */
 import { extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { MAX_SCAN_ITERATIONS, extractBraceArg } from './brace-scan.mts';
+import { blocksFromPlainText } from './blocks.mts';
+import { parseTexFile } from './tex/index.mts';
+import type { MacroTable } from './tex/index.mts';
 import type { SourceBlock } from './chunk.mts';
+
+export { blocksFromPlainText } from './blocks.mts';
 
 /** Either the parsed blocks, or a reason the file was skipped (surfaced to UI). */
 export type ParseResult = { ok: true; blocks: SourceBlock[] } | { ok: false; reason: string };
+
+/** Per-call context `parseFile` threads to format-specific parsers that need
+ * more than just their own file. Only `.tex` uses this today (its folder
+ * macro table); every other format ignores it. */
+export interface ParseContext {
+  texMacros?: MacroTable;
+}
 
 /** Extensions the companion will attempt, in priority order. */
 export const SUPPORTED_EXTENSIONS = [
@@ -35,20 +54,6 @@ export const SUPPORTED_EXTENSIONS = [
 /** True when a path is worth handing to `parseFile` (drives the folder scan). */
 export function isSupported(path: string): boolean {
   return (SUPPORTED_EXTENSIONS as readonly string[]).includes(extname(path).toLowerCase());
-}
-
-/** Splits plain text into paragraph blocks on blank lines, 1-based indices. */
-export function blocksFromPlainText(text: string): SourceBlock[] {
-  const normalized = text.replace(/\r\n?/gu, '\n');
-  const blocks: SourceBlock[] = [];
-  let paragraph = 0;
-  for (const raw of normalized.split(/\n{2,}/u)) {
-    const trimmed = raw.trim();
-    if (trimmed === '') continue;
-    paragraph += 1;
-    blocks.push({ text: trimmed.replace(/[ \t]*\n[ \t]*/gu, ' '), page: null, paragraph });
-  }
-  return blocks;
 }
 
 /**
@@ -100,231 +105,18 @@ async function parseDocx(path: string): Promise<ParseResult> {
   return blocks.length === 0 ? { ok: false, reason: 'document has no text' } : { ok: true, blocks };
 }
 
-const MAX_COMMAND_ITERATIONS = 5000;
-
-/**
- * Depth-aware scan of a brace-delimited argument, `text[openBraceIndex]` being
- * the opening `{`. Shared by the LaTeX and BibTeX parsers below, both of which
- * need to know where a value actually ends when it can contain nested braces
- * (`\textbf{Bold \emph{and italic}}`, `title = {The {Quick} Brown Fox}`).
- * Returns null on an unbalanced brace so callers can bail out of that one
- * command/field rather than looping or throwing.
- */
-function extractBraceArg(
-  text: string,
-  openBraceIndex: number,
-): { content: string; end: number } | null {
-  let depth = 0;
-  for (let i = openBraceIndex; i < text.length; i += 1) {
-    if (text[i] === '\\') {
-      i += 1;
-      continue;
-    }
-    if (text[i] === '{') depth += 1;
-    else if (text[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return { content: text.slice(openBraceIndex + 1, i), end: i + 1 };
-    }
-  }
-  return null;
-}
-
-function replaceBracedCommand(
-  text: string,
-  names: readonly string[],
-  render: (inner: string) => string,
-): string {
-  const pattern = new RegExp(`\\\\(?:${names.join('|')})\\*?(?:\\[[^\\]]*\\])?\\s*\\{`, 'u');
-  let result = text;
-  for (let iteration = 0; iteration < MAX_COMMAND_ITERATIONS; iteration += 1) {
-    const match = pattern.exec(result);
-    if (!match) break;
-    const openBrace = match.index + match[0].length - 1;
-    const arg = extractBraceArg(result, openBrace);
-    // Unbalanced — stop trying this command set; the residual `\name{` token
-    // is left as slightly noisy literal text rather than looping forever.
-    if (!arg) break;
-    result = result.slice(0, match.index) + render(arg.content) + result.slice(arg.end);
-  }
-  return result;
-}
-
-/** Removes `\name{...}` for each name in `names`, discarding the argument. */
-function dropBracedCommand(text: string, names: readonly string[]): string {
-  return replaceBracedCommand(text, names, () => '');
-}
-
-/** Replaces `\name{...}` with its argument's own text, optionally as its own paragraph. */
-function unwrapBracedCommand(
-  text: string,
-  names: readonly string[],
-  options: { forceBreak: boolean },
-): string {
-  return replaceBracedCommand(text, names, (inner) =>
-    options.forceBreak ? `\n\n${inner}\n\n` : inner,
-  );
-}
-
-/** Removes bare `\name` tokens (no argument) for each name in `names`. */
-function dropBarewordCommand(text: string, names: readonly string[]): string {
-  return text.replace(new RegExp(`\\\\(?:${names.join('|')})\\*?\\b\\s*`, 'gu'), '');
-}
-
-/** Environments whose *content* is noise for retrieval, not just their markup. */
-const NON_PROSE_ENVIRONMENTS = [
-  'equation',
-  'align',
-  'gather',
-  'eqnarray',
-  'math',
-  'displaymath',
-  'figure',
-  'table',
-  'tikzpicture',
-  'verbatim',
-  'lstlisting',
-  'algorithm',
-  'algorithmic',
-];
-
-/**
- * Pulls `\caption{...}` text out of a dropped environment's body before the
- * rest of it is discarded. Captions are the one part of a figure/table that
- * is ordinary prose describing what the content *is* — often the exact
- * sentence a retrieval query like "what was the hyperparameter grid" is
- * looking for — so they're kept as their own paragraph even though the
- * tabular/tikz/math source around them is noise.
- */
-function extractCaptions(body: string): string {
-  const captions: string[] = [];
-  const pattern = /\\caption\*?(?:\[[^\]]*\])?\s*\{/gu;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(body)) !== null) {
-    const openBrace = match.index + match[0].length - 1;
-    const arg = extractBraceArg(body, openBrace);
-    if (!arg) break; // unbalanced — nothing more to recover from this point
-    if (arg.content.trim() !== '') captions.push(arg.content);
-    pattern.lastIndex = arg.end;
-  }
-  return captions.length === 0 ? '' : `\n\n${captions.join('\n\n')}\n\n`;
-}
-
-/**
- * Drops each blocklisted environment's `\begin{name}...\end{name}` span,
- * content included except for any `\caption{...}` — math source and
- * figure/table markup pollute retrieval more than they help, but captions
- * are kept (see `extractCaptions`). An unclosed instance strips from
- * `\begin{name}` to end of the (already document-scoped) text: erring
- * toward removing more rather than leaking raw verbatim/tikz source as if
- * it were prose.
- */
-function dropEnvironments(text: string, names: readonly string[]): string {
-  let result = text;
-  for (const name of names) {
-    result = result.replace(
-      new RegExp(`\\\\begin\\{${name}\\*?\\}([\\s\\S]*?)\\\\end\\{${name}\\*?\\}`, 'gu'),
-      (_whole, body: string) => extractCaptions(body),
-    );
-    result = result.replace(
-      new RegExp(`\\\\begin\\{${name}\\*?\\}([\\s\\S]*)$`, 'u'),
-      (_whole, body: string) => extractCaptions(body),
-    );
-  }
-  return result;
-}
-
-function stripMath(text: string): string {
-  return text
-    .replace(/\$\$[\s\S]*?\$\$/gu, '')
-    .replace(/\$[^$]*?\$/gu, '')
-    .replace(/\\\[[\s\S]*?\\\]/gu, '')
-    .replace(/\\\([\s\S]*?\\\)/gu, '');
-}
-
-/** Strips a `%` comment to end of line. Does not fully tokenize backslash
- * escaping, so a literal `\\%` (escaped backslash then a real comment) is
- * left un-stripped — a documented, rare edge case, not a full TeX lexer. */
-function stripLatexComments(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => line.replace(/(?<!\\)%.*$/u, ''))
-    .join('\n');
-}
-
-/** Slices to the `\begin{document}...\end{document}` body when present
- * (skipping the preamble), else treats the whole file as body — a bare
- * `.tex` fragment meant for `\input` has no document environment at all. */
-function scopeToDocumentBody(text: string): string {
-  const begin = /\\begin\{document\}/u.exec(text);
-  if (!begin) return text;
-  const bodyStart = begin.index + begin[0].length;
-  const end = /\\end\{document\}/u.exec(text.slice(bodyStart));
-  return end ? text.slice(bodyStart, bodyStart + end.index) : text.slice(bodyStart);
-}
-
-const NO_TEXT_BRACED_COMMANDS = [
-  'label',
-  'ref',
-  'eqref',
-  'pageref',
-  'cite',
-  'citep',
-  'citet',
-  'includegraphics',
-  'usepackage',
-  'documentclass',
-  'input',
-  'include',
-  'bibliography',
-  'bibliographystyle',
-  'newcommand',
-  'renewcommand',
-  'hspace',
-  'vspace',
-];
-
-const NO_TEXT_BAREWORD_COMMANDS = ['maketitle', 'tableofcontents', 'noindent', 'newpage', 'clearpage'];
-
-const SECTIONING_COMMANDS = ['section', 'subsection', 'subsubsection', 'paragraph', 'part', 'chapter'];
-
-const INLINE_FORMATTING_COMMANDS = ['emph', 'textbf', 'textit', 'textsc', 'underline', 'footnote', 'caption'];
-
-/**
- * Strips LaTeX markup down to readable prose. Math (`$...$`, `\[...\]`, and
- * environments like `equation`/`align`) and non-prose environments (figures,
- * tables, verbatim/code, tikz) are dropped entirely rather than linearized —
- * rendering math as text is a losing battle that only pollutes retrieval
- * with `\frac{a}{b}` noise. Sectioning and inline-formatting commands are
- * unwrapped to their argument text so headings and emphasized words stay
- * searchable.
- */
-export function stripLatex(source: string): string {
-  let text = scopeToDocumentBody(source);
-  text = stripLatexComments(text);
-  text = dropEnvironments(text, NON_PROSE_ENVIRONMENTS);
-  // Remaining (prose-bearing) environments: drop the begin/end markers and
-  // bare \item labels, keep their content.
-  text = text.replace(/\\begin\{[^}]*\}/gu, '').replace(/\\end\{[^}]*\}/gu, '');
-  text = text.replace(/\\item\b(?:\[[^\]]*\])?\s*/gu, '');
-  text = stripMath(text);
-  text = dropBracedCommand(text, NO_TEXT_BRACED_COMMANDS);
-  text = dropBarewordCommand(text, NO_TEXT_BAREWORD_COMMANDS);
-  text = unwrapBracedCommand(text, SECTIONING_COMMANDS, { forceBreak: true });
-  text = unwrapBracedCommand(text, INLINE_FORMATTING_COMMANDS, { forceBreak: false });
-  text = text.replace(/\\\\/gu, '\n');
-  text = text.replace(/[ \t]*\n{3,}/gu, '\n\n');
-  return text.trim();
-}
-
-async function parseLatex(path: string): Promise<ParseResult> {
-  const blocks = blocksFromPlainText(stripLatex(await readFile(path, 'utf8')));
-  return blocks.length === 0
-    ? { ok: false, reason: 'file has no extractable text after stripping LaTeX markup' }
-    : { ok: true, blocks };
-}
-
 /** BibTeX fields worth indexing, in the order their text is concatenated. */
-const BIBTEX_TEXT_FIELDS = ['title', 'author', 'year', 'journal', 'booktitle', 'abstract', 'note', 'annote', 'keywords'];
+const BIBTEX_TEXT_FIELDS = [
+  'title',
+  'author',
+  'year',
+  'journal',
+  'booktitle',
+  'abstract',
+  'note',
+  'annote',
+  'keywords',
+];
 
 /** Entry types with no bibliographic text of their own. */
 const BIBTEX_SKIP_TYPES = new Set(['comment', 'string', 'preamble']);
@@ -347,7 +139,7 @@ function parseBibtexFields(content: string): Map<string, string> {
   const fieldPattern = /([A-Za-z][\w-]*)\s*=\s*/gu;
   let match: RegExpExecArray | null;
   let iterations = 0;
-  while ((match = fieldPattern.exec(content)) !== null && iterations < MAX_COMMAND_ITERATIONS) {
+  while ((match = fieldPattern.exec(content)) !== null && iterations < MAX_SCAN_ITERATIONS) {
     iterations += 1;
     const name = (match[1] ?? '').toLowerCase();
     const valueStart = fieldPattern.lastIndex;
@@ -406,7 +198,9 @@ export function blocksFromBibtex(text: string): SourceBlock[] {
 
 async function parseBibtex(path: string): Promise<ParseResult> {
   const blocks = blocksFromBibtex(await readFile(path, 'utf8'));
-  return blocks.length === 0 ? { ok: false, reason: 'file has no bibliography entries' } : { ok: true, blocks };
+  return blocks.length === 0
+    ? { ok: false, reason: 'file has no bibliography entries' }
+    : { ok: true, blocks };
 }
 
 const HTML_BLOCK_BREAK_TAGS = /<\/(?:p|div|li|h[1-6]|tr|blockquote)>|<br\s*\/?>/giu;
@@ -458,7 +252,7 @@ async function parseHtml(path: string): Promise<ParseResult> {
 }
 
 /** Reads and parses a single file into blocks, or reports why it was skipped. */
-export async function parseFile(path: string): Promise<ParseResult> {
+export async function parseFile(path: string, context?: ParseContext): Promise<ParseResult> {
   const ext = extname(path).toLowerCase();
   try {
     switch (ext) {
@@ -479,7 +273,7 @@ export async function parseFile(path: string): Promise<ParseResult> {
       case '.docx':
         return await parseDocx(path);
       case '.tex':
-        return await parseLatex(path);
+        return await parseTexFile(path, context?.texMacros);
       case '.bib':
         return await parseBibtex(path);
       case '.html':

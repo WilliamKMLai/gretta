@@ -9,7 +9,6 @@ import {
   isSupported,
   parseFile,
   stripHtml,
-  stripLatex,
 } from './parse.mts';
 
 describe('isSupported', () => {
@@ -71,76 +70,6 @@ describe('blocksFromPdfPage', () => {
   });
 });
 
-describe('stripLatex', () => {
-  it('drops the preamble, unwraps sections and inline commands, strips comments/refs/math', () => {
-    const source = [
-      '\\documentclass{article}',
-      '\\usepackage{amsmath}',
-      '\\begin{document}',
-      '\\section{Introduction}',
-      '% a comment nobody should see',
-      'This is \\emph{important} background, see \\cite{foo} and \\ref{eq:1}.',
-      '\\begin{equation}',
-      'E = mc^2',
-      '\\end{equation}',
-      'Conclusion follows.',
-      '\\end{document}',
-    ].join('\n');
-    const stripped = stripLatex(source);
-    expect(stripped).toContain('Introduction');
-    expect(stripped).toContain('important');
-    expect(stripped).toContain('Conclusion follows.');
-    expect(stripped).not.toContain('\\section');
-    expect(stripped).not.toContain('\\emph');
-    expect(stripped).not.toContain('documentclass');
-    expect(stripped).not.toContain('comment nobody');
-    expect(stripped).not.toContain('\\cite');
-    expect(stripped).not.toContain('\\ref');
-    expect(stripped).not.toContain('mc^2');
-  });
-
-  it('unwraps nested inline commands', () => {
-    expect(stripLatex('\\textbf{Bold \\emph{and italic}} text')).toBe('Bold and italic text');
-  });
-
-  it('returns effectively empty output for a comment-only file', () => {
-    expect(stripLatex('% just a comment\n% another')).toBe('');
-  });
-
-  it('strips an unclosed environment to the end rather than leaking its content', () => {
-    const stripped = stripLatex('Before.\n\\begin{verbatim}\nsome raw code\n');
-    expect(stripped).toContain('Before.');
-    expect(stripped).not.toContain('some raw code');
-  });
-
-  it('treats the whole file as body when there is no \\begin{document}', () => {
-    expect(stripLatex('Just a fragment with \\emph{emphasis}.')).toBe('Just a fragment with emphasis.');
-  });
-
-  it('keeps a table/figure caption but drops the tabular/tikz source around it', () => {
-    const source = [
-      '\\begin{table}[h]',
-      '\\centering',
-      '\\caption{Hyperparameter grid used for tuning.}',
-      '\\begin{tabular}{ll}',
-      'Learning rate & 0.001, 0.01, 0.1 \\\\',
-      '\\end{tabular}',
-      '\\end{table}',
-    ].join('\n');
-    const stripped = stripLatex(source);
-    expect(stripped).toContain('Hyperparameter grid used for tuning.');
-    expect(stripped).not.toContain('Learning rate');
-    expect(stripped).not.toContain('tabular');
-  });
-
-  it('drops an unclosed figure/table but still keeps its caption', () => {
-    const stripped = stripLatex('Before.\n\\begin{figure}\n\\caption{A lost figure.}\nraw junk');
-    expect(stripped).toContain('Before.');
-    expect(stripped).toContain('A lost figure.');
-    expect(stripped).not.toContain('raw junk');
-  });
-});
-
 describe('blocksFromBibtex', () => {
   it('parses brace- and quote-delimited entries into one block each', () => {
     const bib = [
@@ -170,12 +99,15 @@ describe('blocksFromBibtex', () => {
   });
 
   it('skips entries with no indexed fields', () => {
-    const blocks = blocksFromBibtex('@article{k,\n  doi = {10.1/xyz},\n  url = {http://example.com},\n}');
+    const blocks = blocksFromBibtex(
+      '@article{k,\n  doi = {10.1/xyz},\n  url = {http://example.com},\n}',
+    );
     expect(blocks).toEqual([]);
   });
 
   it('ignores @comment and @string entries', () => {
-    const bib = '@comment{ignore me}\n@string{foo = "bar"}\n@article{k,\n  title = {Real Entry},\n}';
+    const bib =
+      '@comment{ignore me}\n@string{foo = "bar"}\n@article{k,\n  title = {Real Entry},\n}';
     const blocks = blocksFromBibtex(bib);
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.text).toContain('Real Entry');
@@ -184,7 +116,8 @@ describe('blocksFromBibtex', () => {
 
 describe('stripHtml', () => {
   it('drops script/style content and produces paragraph breaks at block tags', () => {
-    const html = '<html><head><style>body{color:red}</style><script>alert(1)</script></head>' +
+    const html =
+      '<html><head><style>body{color:red}</style><script>alert(1)</script></head>' +
       '<body><h1>Title</h1><p>First paragraph.</p><p>Second paragraph.</p></body></html>';
     const stripped = stripHtml(html);
     expect(stripped).not.toContain('color:red');
@@ -214,7 +147,10 @@ describe('parseFile', () => {
       join(dir, 'paper.tex'),
       '\\begin{document}\n\\section{Intro}\nSome findings here.\n\\end{document}',
     );
-    writeFileSync(join(dir, 'refs.bib'), '@article{k,\n  title = {A Reference},\n  author = {A. Author},\n}');
+    writeFileSync(
+      join(dir, 'refs.bib'),
+      '@article{k,\n  title = {A Reference},\n  author = {A. Author},\n}',
+    );
     writeFileSync(join(dir, 'page.html'), '<html><body><p>Hello world.</p></body></html>');
     writeFileSync(join(dir, 'notes.rst'), 'First para.\n\nSecond para.');
   });

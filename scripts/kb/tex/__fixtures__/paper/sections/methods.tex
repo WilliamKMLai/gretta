@@ -1,0 +1,18 @@
+\section{Methods}
+
+Our corpus contains \dsize{} passages, each truncated to a context budget of
+\unit{80}{token} per passage and a wall-clock budget of \unit{4}{min} per
+query during evaluation. \todo{Add the $m = 20$ run} once the larger sweep
+finishes.
+
+We tune the BM25 scoring function with $k_1 \in \{0.9, 1.2, 1.5\}$ and
+$b = 0.75$, matching the retrieval-matched compute protocol of
+\citep[cf.][]{lindqvist2021}. The scoring function itself is given in
+\eqref{eq:bm25} and is not re-derived here.
+
+\begin{itemize}
+\item Passages are chunked with a 10\% overlap between adjacent windows.
+\item Embeddings are computed once per collection and cached on disk.
+\item Retrieval quality is reported at matched compute, not matched wall
+      time, per \citet{lindqvist2021}.
+\end{itemize}

@@ -933,6 +933,82 @@ identical copies; one embed request per model rather than N concurrent ones (the
 `Promise.all` put N simultaneous requests on the daemon); and, since `Promise.all` rejects
 on any failure, N chances to fail become one.
 
+**Amendment (2026-08-11) — folder-scoped `.tex` macro expansion, and citations/math are now
+kept instead of stripped.** `.tex` support (added alongside `.bib`/`.html`/plain-text formats
+as a routine parser addition, not an ADR at the time) was file-scoped and macro-blind:
+`stripLatex` in `parse.mts` read one file at a time and had no way to know that
+`\newcommand{\dsize}{12,481}` in a paper's `main.tex` preamble was the reason
+`sections/methods.tex` — a separate file this reader also ingests independently, since there
+is still no `\input`/`\include` splicing — contained a bare `\dsize{}` invocation. That
+invocation leaked into the chunk verbatim, corrupting both the embedding and any text later
+surfaced into a Word document. The same version also stripped math (`$...$`, `equation`/
+`align` environments) and citation/ref commands (`\cite`, `\ref`, …) entirely, which is
+backwards for this reader's actual user: someone authoring LaTeX wants `\citep{pierce2019}`
+and `$b = 0.75$` to come back retrievable and directly reusable, not deleted.
+
+_What changed._ `.tex` parsing moved out of `parse.mts` into `scripts/kb/tex/` as a two-pass
+design. Pass 1 (`tex/macros.mts`, `buildMacroTable`) reads every `.tex` file the collection's
+folders contain and merges `\newcommand`/`\renewcommand`/`\def` definitions into one flat
+table — last definition wins on a name collision, logged as a warning naming both source
+files, since two unrelated papers sharing one collection folder and happening to reuse a
+macro name is a real scenario a user should see, not silently resolve. Pass 2
+(`tex/strip.mts`, orchestrating `tex/seal.mts`, `tex/environments.mts`, `tex/commands.mts`,
+`tex/normalize.mts`) processes each file independently against that table: verbatim/
+`lstlisting`/`\verb` regions are sealed before anything else can parse inside them; math
+(`$...$`, `\[...\]`, and the amsmath display environments) is sealed _after_ macro expansion
+so a macro used inside math still resolves, then restored verbatim at the end; citations and
+refs are preserved as written rather than stripped. Both reversals (math and citations kept,
+not stripped) sit behind one constant, `PRESERVE_MATH_AND_CITATIONS` in `strip.mts`, so the
+previous behavior is a one-line flip away if the embedding-noise tradeoff turns out wrong in
+practice. `parse.mts` keeps its `(path) => Promise<ParseResult>` shape for every other format
+unchanged; `.tex` alone gains an optional second parameter (`ParseContext.texMacros`) so
+`index-store.mts` can thread pass 1's table through without disturbing the other formats'
+call sites. No `eslint-plugin-boundaries` change was needed — `scripts/kb/` was never part of
+that graph (`boundaries/include` is `src/**/*` only); the only cross-cutting rule already in
+place was this document's "no cross-realm value imports" for `types/knowledgebase.ts`, which
+the new modules simply keep following.
+
+_The incremental-indexing interaction this forced._ This document's storage section opens
+with "a file whose hash is unchanged is skipped entirely" as _the_ premise incremental
+indexing rests on. Macro expansion breaks it: editing a macro's definition in `main.tex`
+changes what `sections/methods.tex` should say without changing `sections/methods.tex`'s own
+bytes at all, and a per-file content hash structurally cannot see that. A new table,
+`tex_macro_state` (`store.sqlite.mts`; `getTexMacroHash`/`setTexMacroHash`), records the
+folder macro table's fingerprint (`fingerprintMacroTable`, order-independent over the table's
+entries) as of each collection's last reindex. `CollectionIndexer.reindex()` now builds the
+table once per pass — before the per-file loop, right where a folder-level pre-pass naturally
+belongs — and, if the fingerprint changed, treats every `.tex` file as changed for that pass
+regardless of its own hash. Concretely: editing prose in `sections/methods.tex` alone still
+re-embeds only that file, same as any other format; redefining a macro in `main.tex` re-embeds
+every `.tex` file in scope, which is more re-embedding than a change to one file strictly
+required but is the correctness-preserving choice — the alternative (trust the per-file hash
+regardless) would silently leave stale, pre-edit values sitting in already-served chunks. This
+also self-heals the transition for anyone who already indexed `.tex` files under the old,
+macro-blind reader: `getTexMacroHash` returns null for a collection that has never recorded a
+fingerprint, which the bypass treats as "changed," so the first reindex after upgrading
+re-embeds every `.tex` file once regardless of content hash. `tex_macro_state` is a new table,
+not a new column on `chunks`/`collections` — `CREATE TABLE IF NOT EXISTS` picks it up on an
+existing database with no migration step, which a new _column_ on an existing table would not
+get from the same mechanism.
+
+_Macro scope is collection-wide, not strictly per-folder — flagged, not silently decided._
+`CollectionIndexer.reindex()` builds one macro table from every `.tex` file `scanAll()` finds,
+and `scanAll()` already aggregates across _every_ folder configured for the collection (a
+collection has always been able to span more than one folder — see _Collections & document
+binding_ above). A collision warning fires regardless of whether the two colliding files sit
+in the same folder or in two different folders of the same collection, so a cross-folder
+collision is reported, not silently resolved — but it is still merged into one table rather
+than kept separate. For the ordinary case — one collection pointed at one paper's folder —
+this is invisible. It stops being invisible if a collection is deliberately built by pointing
+at two _unrelated_ LaTeX projects that happen to reuse a macro name: today they'd share a
+macro table (with a collision warning) rather than being kept fully isolated per folder.
+Scoping macro tables per top-level configured folder instead of per collection is a real,
+somewhat larger change — `scanAll()`'s `{ absolute, source }` pairs do not currently record
+which configured folder an entry came from (the existing "overlapping folders: first wins"
+dedupe collapses that distinction, since two folders can already produce the same relative
+`source`), so it is not a change confined to the `.tex` reader alone. Left as-is rather than
+built speculatively; a candidate follow-up if it turns out to matter in practice.
+
 ## ADR-021 — Generation history replaces the multi-conversation model
 
 **Status:** Accepted (Phase 12, 2026-07-23)

@@ -113,17 +113,26 @@ If any step doesn't match what's described, see Troubleshooting below.
 
 ## What gets indexed
 
-| Type                                                              | Citation granularity                                    |
-| ----------------------------------------------------------------- | -------------------------------------------------------- |
-| `.pdf`                                                            | page number                                              |
-| `.docx`                                                           | paragraph                                                |
-| `.txt`, `.md`, `.markdown`, `.rst`, `.org`, `.adoc`, `.asciidoc` | paragraph                                                |
-| `.tex`                                                            | paragraph (after stripping LaTeX markup; math, figures, and tables are excluded) |
-| `.bib`                                                            | per bibliography entry                                   |
-| `.html`, `.htm`                                                   | paragraph (after stripping tags)                          |
+| Type                                                             | Citation granularity                                                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `.pdf`                                                           | page number                                                                                                                          |
+| `.docx`                                                          | paragraph                                                                                                                            |
+| `.txt`, `.md`, `.markdown`, `.rst`, `.org`, `.adoc`, `.asciidoc` | paragraph                                                                                                                            |
+| `.tex`                                                           | paragraph (LaTeX markup stripped; math and citations/refs are kept as written, figure/table source is dropped but captions are kept) |
+| `.bib`                                                           | per bibliography entry                                                                                                               |
+| `.html`, `.htm`                                                  | paragraph (after stripping tags)                                                                                                     |
 
 Subfolders are included. Scanned PDFs with no text layer are skipped with a reason (there
 is no OCR). Anything skipped is listed in the panel so you know what was left out.
+
+**`.tex` macros are shared across the whole folder, not just within one file.** Each `.tex`
+file is still indexed as its own independent document — there's no `\input`/`\include`
+splicing, so a file included by another is indexed separately, and that's expected. The one
+exception is `\newcommand`/`\renewcommand`/`\def`: those are collected from every `.tex` file
+in the collection's folder(s) first, so a macro defined in a main file's preamble still
+expands correctly when used in a file it `\include`s. If two different files define the same
+macro name, the one indexed last wins and the companion logs a warning naming both files —
+worth knowing if a collection spans two unrelated LaTeX projects that happen to reuse a name.
 
 Re-indexing is **incremental**: a file is only re-read and re-embedded when its contents
 actually change, edits are picked up automatically (a folder watcher, debounced so a burst

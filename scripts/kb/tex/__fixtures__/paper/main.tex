@@ -1,0 +1,73 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\newcommand{\dsize}{12,481}
+\newcommand{\unit}[2]{#1 #2}
+\newcommand{\todo}[1]{TODO: #1}
+
+\title{Retrieval-Matched Compute for Clinical Question Answering}
+\author{A. Researcher}
+\date{2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We study a matched-compute protocol for clinical question answering and
+report retrieval quality at a fixed evaluation budget.
+\end{abstract}
+
+\section{Introduction}
+
+% \section{Ghost Section}
+This paper studies retrieval-augmented generation under a matched-compute
+budget. Prior work by \citep[cf.][]{lindqvist2021} established the baseline
+protocol we extend here; see also \eqref{eq:bm25} for the scoring function
+we build on.
+
+Annotation cost ranged from \$40--\$60 per batch. % TODO: confirm currency before submission
+Accuracy on the pilot set improved from 61\% to 78\% after re-weighting. % TODO: verify this stat
+
+We thank Bj\"{o}rk H. and the team at the Erd\H{o}s Institute, along with
+our na\"{\i}ve early collaborators and a caf\'{e} in Sant\'{e} Square where
+most of this draft was written.
+
+\begin{lstlisting}[language=Python]
+# score = {unbalanced
+# 12,481 examples processed in the demo run, not the real dataset count
+def score(x):
+    return x % 2
+\end{lstlisting}
+
+\begin{verbatim}
+{unbalanced brace in a code sample
+100% raw, not a real LaTeX comment
+\end{verbatim}
+
+\section{Discussion}
+
+The matched-compute protocol keeps annotation and inference budgets fixed
+across conditions so that quality differences cannot be attributed to
+unequal compute rather than to the retrieval method itself.
+
+\begin{figure}[t]
+\centering
+\includegraphics{pipeline.png}
+\caption{Overview of the retrieval-matched compute pipeline.}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Retrieval quality across datasets at matched compute.}
+\begin{tabular}{lc}
+\toprule
+Dataset & Recall@10 \\
+\midrule
+MIMIC-Ext & 0.612 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
