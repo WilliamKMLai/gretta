@@ -38,10 +38,29 @@ for the process a new phase follows.
   "nothing leaves the machine," and only ever a query you've reviewed and approved.
 - **Rebrand to GRETTA**, ADR-024, with a one-time adoption path so pre-rebrand settings,
   history, and knowledge-base bindings carry over.
+- **Phase 17a — Images in prompts**, ADR-034. Attach, paste, or drop a figure and ask about
+  it. One optional `visionModel` setting defaulting to the model you already use, with
+  vision support detected via `/api/show` rather than guessed from the model name. Images
+  are downscaled before sending and charged against the context budget.
+- **Phase 17b — The figure in your document**, ADR-035. Read the selected figure out of the
+  open document as OOXML and send it, with Windows metafiles (Excel charts, equations)
+  detected and explained rather than silently skipped.
 
 ---
 
 ## What's next
+
+### Phase 17c–d — Figures in the knowledge base
+
+**Objective:** extend vision from images the user hands over to figures GRETTA finds itself.
+
+**Scope:** figures inside indexed PDFs — caption-anchored detection at index time, rendered
+and described on demand and cached, so a figure becomes an ordinary text chunk in the
+existing vector space with its pixels attached at answer time (ADR-036); and live progress
+for the opt-in "Describe all figures" pass (ADR-037).
+
+**Exit criteria:** a question whose answer lives in a figure retrieves that figure, cites it
+by page, and is answered from what the figure actually shows.
 
 ### Phase 16 — Citations & reference managers
 

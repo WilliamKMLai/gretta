@@ -15,10 +15,13 @@ import type {
   HighlightColor,
   HostInfo,
   OfficeService,
+  DocumentImage,
   OfficeThemeKind,
+  SelectedImages,
   SelectionInfo,
 } from './office.types';
 import { WORD_API_COMMENTS } from './requirements';
+import { imagesFromOoxml } from './ooxml';
 
 /** Word's classic highlighter palette for our semantic colors. */
 const HIGHLIGHT_HEX: Record<Exclude<HighlightColor, 'none'>, string> = {
@@ -43,6 +46,21 @@ function isOfficeExtensionErrorLike(value: unknown): value is { code: string; me
     'message' in value &&
     typeof value.message === 'string'
   );
+}
+
+/**
+ * Normalizes what `getBase64ImageSrc()` returns.
+ *
+ * Word is documented as returning "the base64 encoded image", and hosts differ
+ * on whether that carries a `data:` prefix. Both shapes are accepted; when the
+ * prefix is absent the type is unknown, and `image/png` is a safe label because
+ * browsers sniff the actual bytes rather than trusting a Blob's declared type.
+ */
+export function splitBase64Image(source: string): { mediaType: string; dataBase64: string } {
+  const match = /^data:([^;,]+)[^,]*,(.*)$/su.exec(source.trim());
+  return match === null
+    ? { mediaType: 'image/png', dataBase64: source.trim() }
+    : { mediaType: (match[1] ?? 'image/png').toLowerCase(), dataBase64: match[2] ?? '' };
 }
 
 function wrapOfficeFailure(operation: string, cause: unknown): OfficeError {
@@ -81,6 +99,64 @@ export class WordOfficeService implements OfficeService {
       range.load('text');
       await context.sync();
       return { text: range.text, isEmpty: range.text.trim().length === 0 };
+    });
+  }
+
+  /**
+   * Pictures in the selection, via the OOXML coercion (ADR-035).
+   *
+   * Deliberately not inside `Word.run`: this is a Common API on
+   * `Office.context.document`, not a member of the Word object model, so there
+   * is no `RequestContext` to batch it into and no requirement set to gate it
+   * with. It is promisified here because `getSelectedDataAsync` is
+   * callback-only.
+   *
+   * A failed read is normalized like every other Office failure. An *empty*
+   * read is not a failure: selecting text with no picture in it is an ordinary
+   * thing to do and answers with an empty list.
+   */
+  async getSelectedImages(): Promise<SelectedImages> {
+    this.ensureHost('read the selected figure');
+    const ooxml = await new Promise<string>((resolve, reject) => {
+      try {
+        Office.context.document.getSelectedDataAsync(
+          Office.CoercionType.Ooxml,
+          (result: Office.AsyncResult<string>) => {
+            if (result.status === Office.AsyncResultStatus.Succeeded) {
+              resolve(result.value);
+              return;
+            }
+            reject(wrapOfficeFailure('read the selected figure', result.error));
+          },
+        );
+      } catch (error) {
+        reject(toAppError(error, (cause) => wrapOfficeFailure('read the selected figure', cause)));
+      }
+    });
+    return imagesFromOoxml(ooxml);
+  }
+
+  /**
+   * Inline pictures in the selection, batched into one `Word.run`.
+   *
+   * `getBase64ImageSrc()` returns a `ClientResult`, so every call is queued
+   * first and read after a single `sync()` — one round trip for N pictures
+   * rather than N.
+   */
+  async getSelectedInlinePictures(): Promise<DocumentImage[]> {
+    return this.run('read figures in the selection', async (context) => {
+      const pictures = context.document.getSelection().inlinePictures;
+      pictures.load('items');
+      await context.sync();
+
+      const sources = pictures.items.map((picture) => picture.getBase64ImageSrc());
+      if (sources.length === 0) return [];
+      await context.sync();
+
+      return sources.map((source, index) => ({
+        name: `Figure ${String(index + 1)}`,
+        ...splitBase64Image(source.value),
+      }));
     });
   }
 

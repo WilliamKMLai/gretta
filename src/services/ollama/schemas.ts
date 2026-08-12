@@ -28,6 +28,11 @@ const ModelDetailsSchema = z
     family: z.string().optional(),
     parameter_size: z.string().optional(),
     quantization_level: z.string().optional(),
+    // `gguf` for anything pulled from the library; `safetensors` for a model
+    // imported or converted locally. Reported because it is the usual
+    // explanation when a model family that *is* multimodal shows up without
+    // the `vision` capability (ADR-034).
+    format: z.string().optional(),
   })
   .optional();
 
@@ -155,6 +160,7 @@ export function parseShow(json: unknown): OllamaModelDetails {
     family: show.details?.family ?? null,
     parameterSize: show.details?.parameter_size ?? null,
     quantizationLevel: show.details?.quantization_level ?? null,
+    format: show.details?.format ?? null,
     contextLength,
     capabilities: show.capabilities ?? [],
   };

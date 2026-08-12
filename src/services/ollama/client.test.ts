@@ -399,11 +399,35 @@ describe('OllamaClient · non-streaming and unary endpoints', () => {
       family: 'llama',
       parameterSize: '3.2B',
       quantizationLevel: 'Q4_K_M',
+      format: null,
       contextLength: 131072,
       capabilities: ['completion', 'tools'],
     });
     const sent = JSON.parse(bodyText) as { model: string; name: string };
     expect(sent).toEqual({ model: 'llama3.2', name: 'llama3.2' });
+  });
+
+  it('reports a locally imported build as safetensors with no vision capability', async () => {
+    // The real shape behind "but this model family has vision": a converted
+    // build reports no vision tower, and Ollama then refuses the image itself
+    // with "this model does not support image input" (ADR-034). `format` is
+    // what lets the pane explain that rather than just deny it.
+    const show = JSON.stringify({
+      details: { family: 'gemma4_unified', parameter_size: '12.4B', format: 'safetensors' },
+      capabilities: ['completion', 'tools', 'thinking'],
+    });
+    const client = createOllamaClient({
+      baseUrl: BASE,
+      transport: () => Promise.resolve(new Response(show, { status: 200 })),
+    });
+    await expect(client.showModel('gemma4:12b-mlx')).resolves.toEqual({
+      family: 'gemma4_unified',
+      parameterSize: '12.4B',
+      quantizationLevel: null,
+      format: 'safetensors',
+      contextLength: null,
+      capabilities: ['completion', 'tools', 'thinking'],
+    });
   });
 });
 

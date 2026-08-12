@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RetrievedChunk } from '../../../types/knowledgebase';
-import { MAX_EXCERPT_SHARE, allocateBudget, describeBudget } from './budget';
+import { IMAGE_TOKEN_ESTIMATE, MAX_EXCERPT_SHARE, allocateBudget, describeBudget } from './budget';
 import type { ContextBlock } from './provider';
 
 const chunk = (source: string, score: number, size = 200): RetrievedChunk => ({
@@ -152,6 +152,45 @@ describe('allocateBudget', () => {
     const snapshot = input[0]?.sources.length;
     allocateBudget({ ...base, blocks: input });
     expect(input[0]?.sources.length).toBe(snapshot);
+  });
+});
+
+describe('attached images (ADR-034)', () => {
+  it('costs nothing when no images are attached', () => {
+    const without = allocateBudget(base);
+    const explicitZero = allocateBudget({ ...base, imageCount: 0 });
+    expect(explicitZero.estimatedTokens).toBe(without.estimatedTokens);
+  });
+
+  it('charges each image against the budget', () => {
+    const one = allocateBudget({ ...base, imageCount: 1 });
+    const two = allocateBudget({ ...base, imageCount: 2 });
+    expect(one.estimatedTokens - allocateBudget(base).estimatedTokens).toBe(IMAGE_TOKEN_ESTIMATE);
+    expect(two.estimatedTokens - one.estimatedTokens).toBe(IMAGE_TOKEN_ESTIMATE);
+  });
+
+  it('gives up excerpts to make room for an image, not the other way round', () => {
+    // An image the user attached is the subject of the question; an excerpt is
+    // supporting material. The excerpt is what yields.
+    //
+    // Sized so the excerpts sit just under their own share cap (~1536 tokens of
+    // a 3072 budget) and only tip over once the image's 1600 is charged — so
+    // this exercises the image pushing them out, not the cap doing it anyway.
+    const blocks = [block([chunk('a.pdf', 0.9, 3000), chunk('b.pdf', 0.4, 3000)])];
+    const withoutImage = allocateBudget({ ...base, blocks });
+    expect(withoutImage.trimmed).toEqual([]);
+
+    const withImage = allocateBudget({ ...base, blocks, imageCount: 1 });
+    expect(withImage.trimmed.some((note) => note.kind === 'excerpt-dropped')).toBe(true);
+    expect(withImage.blocks[0]?.sources.map((s) => s.source)).toEqual(['a.pdf']);
+  });
+
+  it('reports overflow rather than silently dropping an image that cannot fit', () => {
+    // The failure ADR-025 exists to prevent, arriving through the image door:
+    // Ollama would trim the prompt from the front without saying anything.
+    const result = allocateBudget({ ...base, contextLength: 1024, imageCount: 2 });
+    expect(result.overflow).toBe(true);
+    expect(describeBudget(result)).toMatch(/context/i);
   });
 });
 

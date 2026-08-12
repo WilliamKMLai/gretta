@@ -2550,3 +2550,220 @@ never the only way in.
 The dialog itself cannot be unit-tested — it is a modal window awaiting a human. Everything around
 it (platform dispatch, outcome mapping, the argument array, the concurrency guard) is tested with
 `execFile` mocked, and the dialog is verified by hand on each platform.
+
+---
+
+## ADR-034 — One model that can see, not a third model role
+
+**Status:** Accepted (2026-08-12)
+
+**Context.** GRETTA is text-only in every layer. `ChatRequest.messages` carries a bare
+`content: string`, the clipboard service writes text and cannot read, and `grep -rni image src/`
+returns nothing. Meanwhile the workload this project exists for is scientific writing, where the
+figure is frequently where the result actually lives — a reviewer's comment on a plot, a check that
+error bars support the claim, a second opinion on whether a panel reads clearly.
+
+Ollama has supported vision models for some time: `/api/chat` accepts a per-message
+`images: string[]` of base64, and `/api/show` reports `vision` among a model's `capabilities`. Both
+sides of that are already reachable from this codebase — `OllamaClient.showModel()` was implemented
+in Phase 4, plumbed through `app/services.ts`, and then never called from a single hook or component.
+The capability data has been sitting there unused since.
+
+This ADR covers reading images the user supplies. Figures extracted from indexed PDFs are a larger
+change to the companion and get their own ADR.
+
+**Decision.**
+
+_One optional `visionModel`, defaulting to the general model._ `visionModel: string | null`, where
+`null` means "same as the general model" — the same shape and semantics the literature feature's
+`litDraftModel` already uses (`useLiteratureSearch.ts` resolves `litDraftModel ?? defaultModel`),
+including `''` rendering as "Same as the default model" in its `<Select>`. That pattern was never
+written up; this ADR adopts it deliberately rather than inventing a second convention for the same
+problem.
+
+Rejected: a mandatory third model role. `qwen2.5vl`, `llama3.2-vision`, and `gemma3` are competent
+general chat models, so for most users one model covers both jobs and a second required dropdown is
+friction bought for nothing. Rejected equally: no setting at all. Someone running a large text model
+they are happy with should be able to keep it and add a small vision model beside it, and forcing
+them to switch their default model to look at one figure is the worse failure.
+
+_Capability is detected, not guessed._ `useModelDetails(name)` calls `/api/show` on the query key
+ARCHITECTURE.md §8 already reserves (`['ollama','model',name]`), with `staleTime: Infinity` because
+a model tag's capabilities cannot change under us.
+
+This deliberately does **not** follow ADR-026's name-substring approach (`looksLikeEmbeddingModel`).
+That heuristic exists because filtering a dropdown means classifying every installed model, and one
+`/api/show` per model on every panel open is a real cost. The question here is different and much
+cheaper: "can _this one_ model see?", asked about one or two selected models. A wrong guess also
+costs more — a name-matched embedding model produces a visible error, whereas a model wrongly assumed
+to have vision silently ignores the image and answers from the text alone, which reads as a bad
+answer rather than a misconfiguration. Where the answer is affordable, ask rather than pattern-match.
+
+_A run carrying images goes wholly to the vision model._ Not a two-stage "describe the image, then
+hand the description to the good writer". One stage gives the model the pixels and the prompt
+together, which is strictly more information than any intermediate description preserves. The
+two-stage path has a real use, but it serves retrieval rather than answering, and belongs with the
+knowledge base.
+
+_Images ride on the message, matching Ollama's own shape._ `messages[].images?: string[]`, optional,
+key omitted entirely when absent. Rejected: a general content-part model (`content: string | Part[]`)
+of the kind provider-agnostic SDKs use. There is one provider (§13.5), and inventing a richer
+internal shape only to flatten it back at the wire would be an abstraction generalized from a single
+case — exactly what ROADMAP.md defers until a third real provider exists to generalize from.
+
+Because the field is optional, `buildChatRequest` produces byte-identical output when no image is
+attached, and the per-built-in payload snapshots from Phase 8 stay green. That is the property that
+makes this safe to add to a pure builder the whole prompt library is pinned against.
+
+_Images are downscaled in the pane before they are sent._ Long edge capped at 1400px and re-encoded.
+Vision models tile at roughly 1120px and downscale anything larger anyway, so the pixels above that
+cost tokens and latency without buying detail; a phone photo pasted at full size is 20 MB of base64
+in a loopback request for no gain. Re-encoding also drops EXIF, so a photographed whiteboard does not
+carry GPS coordinates into a request — incidental to the purpose, but the right default for a project
+whose premise is that nothing leaves the machine.
+
+_Images are charged to the context budget._ `num_ctx` covers the prompt and the reply, and Ollama
+trims an over-long prompt from the front without saying so — the failure ADR-025 exists to prevent.
+An image is not free: roughly 1600 tokens per tile. Not reserving for it would reintroduce silent
+front-truncation through a new door, so `allocateBudget` subtracts a conservative per-image estimate
+before it allocates anything else. The estimate is provisional in the same sense as ADR-029's
+ranking constants — chosen against one model family, to be corrected against measurement.
+
+_The attach button is always visible, including when the model cannot see._ ADR-033 established the
+opposite reflex — `FolderPickerButton` renders `null` when the companion cannot open a dialog — and
+that is right for a button whose action is genuinely unavailable. This case is not that. The user is
+one settings change away from the feature working, and hiding the control teaches them nothing:
+they never learn the feature exists, let alone what to fix. So the button stays, attaching still
+works, and the reason it will not be sent is stated at the moment of attaching, with the fix one
+click away.
+
+**Consequences.** GRETTA gains a second thing a model can be chosen _for_, and with it a new class
+of confusing state: a run can now silently do less than the user expected if the resolved model
+cannot see. Every path that drops an image therefore has to say so — silence here is the failure
+mode, not an inconvenience.
+
+Model swapping becomes a real cost when `visionModel` differs from the general model: Ollama loads
+and unloads, so an image run pays seconds of latency and VRAM churn that a text run does not. This
+is the argument for the shared-model default, and it is why the setting is offered rather than
+encouraged.
+
+`showModel()` is finally called by something, which means its Zod schema and error mapping are on a
+live path for the first time. Any latent problem in `parseShow` surfaces now.
+
+---
+
+## ADR-035 — The figure already in the document, via OOXML
+
+**Status:** Accepted (2026-08-12)
+
+**Context.** ADR-034 gave GRETTA three ways to hand it an image: attach, paste, drop. All
+three ask the user to have the picture as a _file_, or on the clipboard. But the most likely
+figure someone wants a second opinion on while writing a paper in Word is the one already
+sitting in the document they are writing — and getting it out of there currently means
+right-clicking, saving to disk, and attaching it back. That is a silly round trip through
+the filesystem for a picture that is six inches up the screen.
+
+`OfficeService` has never touched anything but text. Its contract says so, and ADR-007
+tightened it further: `insertText` only, never `insertHtml`. This is the first read of
+non-text content from a document, so it is worth being explicit about what is being opened
+up and what is not.
+
+**Decision.**
+
+_Read the selection as OOXML and pull the image parts out._ `getSelectedDataAsync` with
+`Office.CoercionType.Ooxml` returns a flat package — `<pkg:part pkg:contentType="image/png">`
+entries whose `<pkg:binaryData>` is base64. There is no image API in Office.js to prefer over
+this; the coercion is the only route to the bytes.
+
+_This stays a read._ ADR-007's rule is about writing — GRETTA must not put markup into a
+document, because model output is data and never code. Reading OOXML does not weaken that:
+nothing parsed here is ever written back, and the only thing extracted is base64 image bytes,
+which go to a local model and nowhere else. The document is not modified.
+
+_Parsing reuses `fast-xml-parser` with entity expansion off._ Same configuration posture as
+`pubmed.schemas.ts`, for the same reason — a package with expanding entities should cost
+nothing rather than exhaust memory. The XML here comes from Word rather than a third party,
+so the threat is lower, but the setting is free and a parser configured two different ways in
+one codebase is a trap for whoever reads it next.
+
+_Windows metafiles are detected and explained, not silently dropped._ This is the failure
+mode that matters. Word stores a pasted Excel chart, an equation, or a drawing canvas as EMF
+or WMF, and **no browser can decode either** — `createImageBitmap` simply fails. A figure
+that looks perfectly normal on screen therefore yields bytes that cannot be turned into
+pixels. Treating that as "no image found" would be actively misleading, because the user is
+looking straight at the figure. So metafile parts are recognised, and the message names the
+format and gives the workaround that does work: copy the figure in Word and paste it into the
+prompt box, which puts a bitmap on the clipboard instead.
+
+_Everything funnels through `prepareImage`._ The OOXML path produces base64, not a `File`,
+so it converts to a `Blob` and enters the same pipeline as the other three doors (ADR-034).
+The downscale, the re-encode, the size ceiling, and the EXIF drop are not re-implemented, and
+cannot be skipped by this route.
+
+_The button is hidden outside Word._ Unlike the attach button — which stays visible even when
+the model cannot see, because that is fixable in Settings — there is no document to read in
+browser dev mode, and no setting that would create one. This is the `FolderPickerButton` case
+(ADR-033), not the vision-capability case, and it hides.
+
+_`isApiSupported` cannot gate this._ `getSelectedDataAsync` is a Common API rather than a
+member of a WordApi requirement set, so there is no version to interrogate; the manifest's
+WordApi 1.3 baseline says nothing about it. The call is therefore attempted and its failure
+handled, like any other Office operation, rather than pre-flighted.
+
+**Consequences.** `OfficeService` gains a non-text read, and with it the first Office
+operation whose result depends on _what kind of content_ is selected rather than merely how
+much. "Nothing happened" now has three distinct causes the UI must tell apart: no selection,
+a selection with no picture in it, and a picture in a format the browser cannot decode. Only
+the third is interesting, and it is the one users will hit with charts.
+
+The OOXML package for a selection can be large — Word includes styles, numbering, and theme
+parts alongside the media — so a whole-document selection moves a lot of XML through the
+bridge to extract a few images. Acceptable for a deliberate button press, and a reason not to
+call this speculatively or on every selection change.
+
+Metafile figures remain unreachable by this route. The paste workaround covers them on
+Windows, and this is recorded as a known limitation rather than solved: rasterising EMF in a
+webview would mean shipping a metafile renderer, which is far more than this feature is worth.
+
+### ADR-035 amendment — "Selection" includes the figure in it
+
+**Status:** Accepted (2026-08-12)
+
+Reported immediately on trying the feature: selecting a figure together with its caption, with
+the context chip set to Selection, did not let the model see the figure. Only the button did.
+
+That is what the ADR specified, and it was wrong. Choosing "Selection" is the user saying what
+they are pointing at; a figure inside that selection is part of it. Requiring a second, separate
+click to include it made GRETTA pedantic about a distinction only GRETTA can see — the chip
+reads as "use what I selected", not "use the text of what I selected".
+
+The original reason for the button was cost. Reading OOXML pulls the whole package — styles,
+numbering, theme — which is fine for a deliberate press and far too much to spend on every
+generation, most of which involve no picture at all. That constraint turns out not to bind:
+`Range.inlinePictures` and `InlinePicture.getBase64ImageSrc()` are both **WordApi 1.1**, well
+under the manifest's 1.3 floor, and batch into the `Word.run` that already reads the selection's
+text. The cheap read was available the whole time and simply was not considered.
+
+_Two reads, chosen by cost._ `getSelectedInlinePictures()` is the cheap one and runs
+automatically when the chip is Selection. `getSelectedImages()` (OOXML) stays behind the button.
+
+_The coverage difference is real and is the reason both exist._ Inline pictures are only the
+ones flowing with the text; a floating or text-wrapped figure is not an `InlinePicture` and will
+not be picked up automatically. `Range.shapes` would catch those but is `WordApiDesktop 1.2` —
+desktop-only, outside the requirement-set model — so there is no cheap portable check for them.
+The button remains the answer, and this is a known unevenness rather than a solved problem: a
+user cannot see whether their figure is inline or floating, so the automatic path will
+occasionally seem not to fire for reasons invisible to them.
+
+_Only the Selection chip._ Paragraph and whole-document contexts would drag in figures nobody
+asked about — and at ~1600 tokens each, expensively. "None" means none.
+
+_Silent, including on failure._ This is a bonus on top of a generation the user already asked
+for. Interrupting it with an error about a figure they may not have known was in range is worse
+than the text-only answer they were about to get.
+
+_Identical bytes are treated as already staged._ The automatic read fires on every Generate,
+and a cancelled or failed run deliberately keeps its attachments to retry with, so without
+dedupe each attempt stacked another copy of the same figure. Deduping on the payload rather
+than tracking origin also fixes pasting the same image twice, and needs no notion of where an
+attachment came from.

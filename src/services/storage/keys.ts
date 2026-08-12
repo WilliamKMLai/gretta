@@ -30,7 +30,8 @@ export const STORAGE_VERSIONS: Record<StorageKey, number> = {
   // v5: rescale litCitationImpactWeight — it now weights a log-scaled raw
   // citation count rather than a frequently-null percentile (ADR-029, fifth
   // amendment), so the old default no longer means the same thing.
-  'gretta/settings': 5,
+  // v6: add visionModel, defaulting to null = "use the general model" (ADR-034).
+  'gretta/settings': 6,
   // v2: conversation threads → flat generation records (ADR-021).
   'gretta/history': 2,
   'gretta/prompts': 1,

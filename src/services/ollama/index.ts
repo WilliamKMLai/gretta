@@ -3,6 +3,7 @@
  * (mechanical enforcement lands with the Phase 5 entry-point rule).
  */
 export type {
+  ChatMessage,
   ChatRequest,
   GenerateRequest,
   HttpTransport,

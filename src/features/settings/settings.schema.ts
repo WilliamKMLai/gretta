@@ -90,6 +90,8 @@ export const FIELD_SCHEMAS = {
   litVerification: z.boolean(),
   // Blank means "use the general model"; stored as null, like defaultModel.
   litDraftModel: z.string(),
+  // Same convention (ADR-034): blank is "use the general model", stored as null.
+  visionModel: z.string(),
   // Optional by design (ADR-028): a blank address degrades to the public pool.
   // A malformed one is rejected rather than sent, since a wrong address in a
   // User-Agent misdirects any contact attempt an API operator makes.
@@ -135,6 +137,7 @@ export function toFormValues(settings: AppSettings): SettingsFormValues {
     responseReservePct: settings.responseReservePct,
     kbEnabled: settings.kbEnabled,
     defaultEmbeddingModel: settings.defaultEmbeddingModel,
+    visionModel: settings.visionModel ?? '',
     litEnabled: settings.litEnabled,
     litSources: settings.litSources,
     litVerification: settings.litVerification,
@@ -167,6 +170,10 @@ export function toPatch(
     case 'litDraftModel': {
       const model = (parsed.data as string).trim();
       return { litDraftModel: model === '' ? null : model };
+    }
+    case 'visionModel': {
+      const model = (parsed.data as string).trim();
+      return { visionModel: model === '' ? null : model };
     }
     case 'litOpenAlexKey':
       return { litOpenAlexKey: (parsed.data as string).trim() };

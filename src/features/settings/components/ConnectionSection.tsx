@@ -31,6 +31,7 @@ import type { HostInfo } from '../../../services/office';
 import { describeOllamaError } from '../../../types/errors';
 import { ollamaKeys, useModels } from '../../../hooks/useOllamaQueries';
 import type { UseSettingsFormResult } from '../useSettingsForm';
+import { VisionModelField } from './VisionModelField';
 
 type TestState =
   | { status: 'idle' }
@@ -139,6 +140,8 @@ export function ConnectionSection({
           ))}
         </Select>
       </Field>
+
+      <VisionModelField form={form} setAndCommit={setAndCommit} />
 
       <div className={styles.testRow}>
         <Button

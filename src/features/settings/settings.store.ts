@@ -36,6 +36,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Ollama reports installed models with their tag, so an untagged name never
   // matches the picker's list.
   defaultEmbeddingModel: 'nomic-embed-text:latest',
+  // Null: use the general model (ADR-034). Most vision models chat perfectly
+  // well, so the common case needs no second choice at all.
+  visionModel: null,
   // Everything literature-related is off. ADR-028: no query, and no request of
   // any kind, leaves the machine until the user turns on a specific source.
   litEnabled: false,
@@ -85,6 +88,7 @@ export const appSettingsSchema = z.object({
   kbEnabled: z.boolean(),
   kbUrl: z.string(),
   defaultEmbeddingModel: z.string(),
+  visionModel: z.string().nullable(),
   litEnabled: z.boolean(),
   litSources: z.object({
     pubmed: z.boolean(),
@@ -123,6 +127,7 @@ const pickSettings = (state: SettingsState): AppSettings => ({
   kbEnabled: state.kbEnabled,
   kbUrl: state.kbUrl,
   defaultEmbeddingModel: state.defaultEmbeddingModel,
+  visionModel: state.visionModel,
   litEnabled: state.litEnabled,
   litSources: state.litSources,
   litVerification: state.litVerification,

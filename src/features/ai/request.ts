@@ -6,8 +6,8 @@
  * the per-built-in payload snapshot tests (Phase 8 exit gate) exercise it
  * directly.
  */
-import type { ChatRequest, OllamaOptions } from '../../services/ollama';
-import type { ContextSource, GenerationOptions, PromptTemplate, Role } from '../../types/domain';
+import type { ChatMessage, ChatRequest, OllamaOptions } from '../../services/ollama';
+import type { ContextSource, GenerationOptions, PromptTemplate } from '../../types/domain';
 import { applyTemplate, type PromptVars } from '../prompts';
 
 export interface GenerationInput {
@@ -24,6 +24,14 @@ export interface GenerationInput {
   /** The context chip; drives the free prompt's context block. */
   contextSource: ContextSource;
   model: string;
+  /**
+   * Base64 images for this run (ADR-034), riding on the user message.
+   *
+   * Optional so that a run without images produces byte-identical output to
+   * every version before this one — the property the per-built-in payload
+   * snapshots are pinned against.
+   */
+  images?: readonly string[];
 }
 
 /**
@@ -64,11 +72,24 @@ function toOllamaOptions(
  * Template runs interpolate system + user (a blank system prompt is
  * dropped); free runs compose the draft with a labeled context block.
  */
+/**
+ * Attaches images to the user message, or returns it untouched.
+ *
+ * The key is omitted entirely rather than set to `[]` when there is nothing to
+ * send, so a request built without images serialises exactly as it did before
+ * ADR-034 — which is what keeps the built-in payload snapshots meaningful.
+ */
+function withImages(message: ChatMessage, images: readonly string[] | undefined): ChatMessage {
+  return images === undefined || images.length === 0
+    ? message
+    : { ...message, images: [...images] };
+}
+
 function buildMessages(
   input: GenerationInput,
   vars: PromptVars,
   retrieved: RetrievedContext | null,
-): { role: Role; content: string }[] {
+): ChatMessage[] {
   // Retrieved excerpts are appended as clearly delimited reference material —
   // never merged into the template's own instructions, and never trusted as
   // instructions themselves (§13.1: all of it is data).
@@ -91,12 +112,8 @@ function buildMessages(
       applyTemplate(input.template.user, vars) +
       (excerpts === '' ? '' : `\n\n${excerpts}`) +
       (prior === '' ? '' : `\n\n--- previous result ---\n${prior}`);
-    return system === ''
-      ? [{ role: 'user', content: user }]
-      : [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ];
+    const userMessage = withImages({ role: 'user', content: user }, input.images);
+    return system === '' ? [userMessage] : [{ role: 'system', content: system }, userMessage];
   }
   const parts = [input.draft.trim()];
   if (input.contextSource !== 'none') {
@@ -104,7 +121,7 @@ function buildMessages(
   }
   if (excerpts !== '') parts.push(excerpts);
   if (prior !== '') parts.push('--- previous result ---', prior);
-  return [{ role: 'user', content: parts.join('\n\n') }];
+  return [withImages({ role: 'user', content: parts.join('\n\n') }, input.images)];
 }
 
 /** The single exchange (M1 scope) this run sends: settings ⊕ template defaults. */

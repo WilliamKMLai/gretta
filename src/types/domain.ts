@@ -177,6 +177,18 @@ export interface AppSettings extends GenerationOptions {
   /** Embedding model seeded into new collections; per-collection thereafter. */
   defaultEmbeddingModel: string;
   /**
+   * Model used for runs that carry images (ADR-034). Null inherits
+   * `defaultModel`, which is the common case: most vision models are competent
+   * general chat models, so one model usually covers both jobs and a required
+   * second choice would be friction bought for nothing.
+   *
+   * It exists for the other case — someone running a large text model they are
+   * happy with, who wants a small vision model beside it rather than switching
+   * their default to look at one figure. Whether the resolved model can actually
+   * see is detected via `/api/show`, never inferred from its name.
+   */
+  visionModel: string | null;
+  /**
    * Master switch for literature discovery (ADR-028). Off until opted in, and
    * the only setting that permits any outbound request to a third party.
    */

@@ -23,6 +23,23 @@ import type { ContextBlock } from './provider';
 /** Share of the prompt budget retrieved excerpts may collectively occupy. */
 export const MAX_EXCERPT_SHARE = 0.5;
 
+/**
+ * Tokens charged per attached image (ADR-034).
+ *
+ * An image is not free: llama3.2-vision spends ~1601 tokens on a single 1120px
+ * tile, and comparable models are in the same range. Leaving that out of the
+ * budget would let a prompt that "fits" overflow `num_ctx` once the images are
+ * counted, and Ollama trims the overflow off the front without saying so — the
+ * exact silent-truncation failure this module exists to prevent, arriving
+ * through a new door.
+ *
+ * Provisional in the same sense as ADR-029's ranking constants: chosen against
+ * one model family, to be corrected against measurement. Erring high is the
+ * safe direction — over-reserving drops an excerpt, under-reserving loses the
+ * front of the prompt silently.
+ */
+export const IMAGE_TOKEN_ESTIMATE = 1600;
+
 /** What was given up to make the request fit, for reporting to the user. */
 export interface TrimNote {
   kind: 'document-trimmed' | 'document-dropped' | 'excerpt-dropped';
@@ -42,6 +59,8 @@ export interface BudgetInput {
   blocks: readonly ContextBlock[];
   /** Calibrated characters-per-token ratio for the model in use. */
   charsPerToken: number;
+  /** Images attached to this run; each is charged `IMAGE_TOKEN_ESTIMATE`. */
+  imageCount?: number;
 }
 
 export interface BudgetResult {
@@ -111,7 +130,12 @@ export function allocateBudget(input: BudgetInput): BudgetResult {
   const reserve = Math.min(90, Math.max(0, input.reservePct)) / 100;
   const limitTokens = Math.max(1, Math.floor(input.contextLength * (1 - reserve)));
 
-  const instructionTokens = estimateTokens(input.instruction, charsPerToken);
+  // Images are charged with the instruction rather than being trimmable: an
+  // image the user attached is the subject of the question, so dropping it to
+  // make room would answer a different one. If it does not fit, that is an
+  // overflow to report, exactly as an over-long instruction is.
+  const imageTokens = (input.imageCount ?? 0) * IMAGE_TOKEN_ESTIMATE;
+  const instructionTokens = estimateTokens(input.instruction, charsPerToken) + imageTokens;
   const trimmed: TrimNote[] = [];
   const blocks = input.blocks.map((block) => ({ ...block, sources: [...block.sources] }));
   let documentContext = input.documentContext;

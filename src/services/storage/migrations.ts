@@ -91,6 +91,23 @@ export function settingsV4ToV5(data: unknown): unknown {
   return { ...data, litCitationImpactWeight: V5_CITATION_IMPACT_DEFAULT };
 }
 
+/**
+ * v5 → v6 settings: adds `visionModel` (ADR-034). A v5 payload predates the
+ * field, and the default is null — "use the general model" — so every existing
+ * install lands exactly where a fresh one does: vision works if their model can
+ * see, and nothing is imposed if it cannot.
+ *
+ * Null rather than a guess at an installed vision model on purpose. A migration
+ * that silently pointed generation at a different model than the one the user
+ * picked would be a surprise arriving through an upgrade, which is the one
+ * thing a migration must never be.
+ */
+export function settingsV5ToV6(data: unknown): unknown {
+  if (!isRecord(data)) return data;
+  if ('visionModel' in data) return data;
+  return { ...data, visionModel: null };
+}
+
 /** Shape of a v1 `gretta/history` payload, as far as we rely on it. */
 interface LegacyMessage {
   id?: unknown;
