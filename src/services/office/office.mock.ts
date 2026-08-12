@@ -11,7 +11,9 @@ import type {
   HighlightColor,
   HostInfo,
   OfficeService,
+  DocumentImage,
   OfficeThemeKind,
+  SelectedImages,
   SelectionInfo,
 } from './office.types';
 import { WORD_API_COMMENTS, isVersionAtLeast } from './requirements';
@@ -32,6 +34,11 @@ export interface MockOfficeOptions {
   supportedSets?: Record<string, string>;
   /** Initial selection offsets into the text (default: collapsed at 0). */
   selection?: { start: number; end: number };
+  /**
+   * What `getSelectedImages` answers (ADR-035). Defaults to "no pictures",
+   * which is the truth for a document modelled as a string.
+   */
+  selectedImages?: SelectedImages;
 }
 
 export interface MockComment {
@@ -62,6 +69,7 @@ export class MockOfficeService implements OfficeService {
   private readonly supportedSets: Record<string, string>;
   private readonly comments: MockComment[] = [];
   private readonly highlights: MockHighlight[] = [];
+  private readonly selectedImages: SelectedImages;
   private pendingFailure: OfficeError | null = null;
 
   constructor(options: MockOfficeOptions = {}) {
@@ -72,6 +80,7 @@ export class MockOfficeService implements OfficeService {
       platform: 'unknown',
     };
     this.supportedSets = options.supportedSets ?? { WordApi: '1.4' };
+    this.selectedImages = options.selectedImages ?? { images: [], undecodable: [] };
     const selection = options.selection ?? { start: 0, end: 0 };
     this.selStart = this.clamp(selection.start);
     this.selEnd = this.clamp(Math.max(selection.start, selection.end));
@@ -107,6 +116,28 @@ export class MockOfficeService implements OfficeService {
   getSelection(): Promise<SelectionInfo> {
     const text = this.selectionText();
     return this.takeFailure() ?? Promise.resolve({ text, isEmpty: text.trim().length === 0 });
+  }
+
+  /**
+   * No pictures, always (ADR-035).
+   *
+   * The mock models a document as a string, and there is no honest way to fake
+   * a picture in one. Browser dev mode hides the button for exactly this
+   * reason, so the empty answer is only ever reached by a test that asks
+   * directly — and "the selection has no figure in it" is the answer it wants.
+   * Seed `selectedImages` to exercise the other branches.
+   */
+  getSelectedImages(): Promise<SelectedImages> {
+    return this.takeFailure() ?? Promise.resolve(this.selectedImages);
+  }
+
+  /**
+   * The cheap read's stand-in. Answers with the seeded decodable images, since
+   * the mock has no inline/floating distinction to model — a test seeding
+   * pictures wants them found by whichever path it exercises.
+   */
+  getSelectedInlinePictures(): Promise<DocumentImage[]> {
+    return this.takeFailure() ?? Promise.resolve(this.selectedImages.images);
   }
 
   /** Paragraphs the selection touches, joined with "\n" — mirrors the real service. */

@@ -12,8 +12,11 @@ export type {
   HostInfo,
   OfficeService,
   OfficeThemeKind,
+  DocumentImage,
+  SelectedImages,
   SelectionInfo,
 } from './office.types';
+export { describeUndecodable, imagesFromOoxml, isMetafile } from './ooxml';
 export { detectHostInfo } from './host';
 export { WORD_API_BASELINE, WORD_API_COMMENTS } from './requirements';
 export { WordOfficeService } from './office.service';

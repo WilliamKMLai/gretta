@@ -10,7 +10,7 @@
  */
 import { OfficeMockObject } from 'office-addin-mock';
 import { OfficeError } from '../../types/errors';
-import { WordOfficeService } from './office.service';
+import { WordOfficeService, splitBase64Image } from './office.service';
 import type { HostInfo } from './office.types';
 
 const WORD_HOST: HostInfo = { available: true, host: 'Word', platform: 'PC' };
@@ -161,5 +161,30 @@ describe('WordOfficeService · failure normalization and gating', () => {
     const failure = await browser.getSelection().catch((e: unknown) => e);
     expect((failure as OfficeError).kind).toBe('host-unavailable');
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe('splitBase64Image', () => {
+  it('accepts a bare base64 payload', () => {
+    // Word documents `getBase64ImageSrc()` as returning "the base64 encoded
+    // image"; hosts differ on whether a data: prefix comes with it.
+    expect(splitBase64Image('AAAB')).toEqual({ mediaType: 'image/png', dataBase64: 'AAAB' });
+  });
+
+  it('splits a data URI into its type and payload', () => {
+    expect(splitBase64Image('data:image/jpeg;base64,AAAB')).toEqual({
+      mediaType: 'image/jpeg',
+      dataBase64: 'AAAB',
+    });
+  });
+
+  it('lowercases the type and tolerates extra parameters', () => {
+    expect(splitBase64Image('data:IMAGE/PNG;charset=binary;base64,ZZZ').mediaType).toBe(
+      'image/png',
+    );
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(splitBase64Image('  AAAB\n').dataBase64).toBe('AAAB');
   });
 });

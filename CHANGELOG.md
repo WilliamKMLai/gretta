@@ -7,6 +7,37 @@ All notable changes to this project are documented here. Format loosely follows
 
 ### Added
 
+- **Images in prompts** (ADR-034). Attach a figure with the new button beside the context
+  chip, paste one from the clipboard, or drop a file onto the prompt box, and ask about it —
+  the first thing in GRETTA that is not text. Built for reading figures: plots, panels, and
+  diagrams you want a second opinion on.
+- **Figures in the document** (ADR-035). Select a figure with its caption, leave the context
+  chip on **Selection**, and the figure goes with the text — no extra click. There is also a
+  **Use figure from document** button for sending a figure on its own, or for text-wrapped
+  figures the automatic path cannot see (it uses a cheap read that only covers figures flowing
+  inline with the text). Both appear only inside Word.
+- Figures stored as Windows metafiles (a pasted Excel chart, an equation, a drawing canvas)
+  cannot be read by any browser. Rather than reporting nothing found — while you are looking
+  straight at the figure — GRETTA names the format and points at the workaround that does work:
+  copy it in Word and paste it into the prompt box.
+- A **Vision model** setting, directly under Default model. It defaults to _"Same as the
+  default model"_, so if the model you already use can see, there is nothing to configure.
+  It exists for the other case: keeping a large text model for prose and a smaller vision
+  model beside it, rather than switching your default to look at one figure. A run carrying
+  images goes to whichever model that resolves to.
+- Whether a model can read images is now **checked rather than guessed**, by asking Ollama
+  about the selected model (`/api/show`). The setting says so live — `✓ … can read images`
+  or a warning naming what is wrong. When a model reports no vision support the message
+  attributes it to Ollama, because that is who refuses the request; and when the build is a
+  locally imported one (`safetensors`), it says so, since a converted build of a multimodal
+  family routinely arrives without its vision tower and the library version is the fix.
+  Attaching an image to a model that cannot read it is never silent.
+- Attached images are downscaled to 1400px on the long edge and re-encoded before being
+  sent. Above that, vision models downscale anyway, so the extra pixels cost tokens and
+  latency and buy no detail; re-encoding also drops EXIF, so a photographed whiteboard does
+  not carry GPS coordinates into a request. Images are charged against the context budget
+  (~1600 tokens each) rather than being invisible to it, so an over-long prompt is reported
+  instead of being silently trimmed from the front by Ollama (ADR-025).
 - A **Choose folder…** button when creating or editing a knowledge-base collection, so a
   folder no longer has to be typed or pasted as an absolute path — the single biggest
   day-one friction point (ADR-033). The pane cannot open a folder dialog (Word add-ins have

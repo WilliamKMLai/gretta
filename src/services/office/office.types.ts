@@ -27,6 +27,22 @@ export interface SelectionInfo {
   isEmpty: boolean;
 }
 
+/** One image recovered from the selection, as base64 (ADR-035). */
+export interface DocumentImage {
+  /** Display name; the OOXML part name, e.g. `/word/media/image1.png`. */
+  name: string;
+  mediaType: string;
+  /** Base64 payload, no data-URI prefix. */
+  dataBase64: string;
+}
+
+/** Result of reading pictures out of the selection. */
+export interface SelectedImages {
+  images: DocumentImage[];
+  /** Content types present that no browser can decode (EMF/WMF and friends). */
+  undecodable: string[];
+}
+
 /**
  * Semantic highlight palette exposed to features; the Phase 3 implementation
  * maps these to concrete Word highlight color values. `none` clears highlighting.
@@ -52,6 +68,36 @@ export interface OfficeService {
 
   /** Reads the current selection. */
   getSelection(): Promise<SelectionInfo>;
+
+  /**
+   * Images inside the current selection, read as OOXML (ADR-035).
+   *
+   * The only non-text read in this contract. ADR-007's "never `insertHtml`"
+   * rule is about *writing* markup into a document; nothing read here is ever
+   * written back, and only image bytes are extracted.
+   *
+   * Returns an empty `images` array rather than throwing when the selection
+   * holds no picture. `undecodable` is the case that needs saying out loud: a
+   * pasted Excel chart or equation is stored as a Windows metafile, which no
+   * browser can decode, so the user is looking at a figure GRETTA cannot read.
+   */
+  getSelectedImages(): Promise<SelectedImages>;
+
+  /**
+   * Inline pictures in the selection — the *cheap* read (ADR-035 amendment).
+   *
+   * `Range.inlinePictures` plus `getBase64ImageSrc()` are both WordApi 1.1 and
+   * batch into an ordinary `Word.run`, where `getSelectedImages` pulls the whole
+   * OOXML package (styles, numbering, theme) to find the same bytes. That cost
+   * is fine for a button press and far too high to pay on every generation, so
+   * this is what the automatic path uses.
+   *
+   * The trade is coverage: floating and text-wrapped figures are not inline
+   * pictures and do not appear here. `Range.shapes` would catch them but is
+   * `WordApiDesktop 1.2` — desktop-only, outside the requirement-set model — so
+   * the thorough OOXML read behind the button stays the answer for those.
+   */
+  getSelectedInlinePictures(): Promise<DocumentImage[]>;
 
   /** Reads the full text of the paragraph containing the cursor. */
   getParagraph(): Promise<string>;

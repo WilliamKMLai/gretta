@@ -41,6 +41,7 @@ import { useCalibrationStore } from './calibration.store';
 import { createKnowledgeBaseProvider } from './context/knowledgeBaseProvider';
 import { buildChatRequest, type GenerationInput, type RetrievedContext } from './request';
 import { useStreamStore } from './stream.store';
+import { useAttachmentsStore } from './attachments.store';
 
 export interface UseGenerationResult {
   generate: (input: GenerationInput) => Promise<void>;
@@ -98,6 +99,18 @@ export function useGeneration(): UseGenerationResult {
 
       const settings = useSettingsStore.getState();
 
+      /*
+       * Images ride in on the input, already resolved (ADR-034).
+       *
+       * The caller decides whether to attach them and which model can read
+       * them, for the same reason it already decides `model`: it is the view
+       * that shows the attachments and the capability warning, so a run whose
+       * images were dropped and a pane that says so cannot disagree. By the
+       * time it reaches here, `input.model` IS the model that will answer —
+       * history, calibration, and the budget all follow from that one fact.
+       */
+      const imageCount = input.images?.length ?? 0;
+
       // §16 pipeline: gather optional extra context (RAG) before building the
       // request. Bounded by its own signal so a slow companion can't stall the
       // run, and entirely non-fatal.
@@ -131,6 +144,7 @@ export function useGeneration(): UseGenerationResult {
         documentContext,
         blocks,
         charsPerToken,
+        imageCount,
       });
 
       if (budget.overflow) {
@@ -264,6 +278,10 @@ export function useGeneration(): UseGenerationResult {
           doneStats.promptEvalCount,
         );
         finalize(doneStats, 'completed');
+        // Attachments belong to the question that was just answered. Cleared
+        // only on success, so a cancelled or failed run leaves them staged to
+        // retry with rather than making the user re-attach.
+        useAttachmentsStore.getState().clear();
         const text = useStreamStore.getState().text;
         const services = getServices();
         if (settings.autoCopy) {

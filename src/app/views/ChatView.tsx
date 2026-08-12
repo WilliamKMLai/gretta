@@ -5,7 +5,7 @@
  * useGeneration (§11.1) — the hook owns the AbortController; the store's
  * `cancel` is only its terminal-state bookkeeping, never called from here.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import {
   Button,
@@ -19,11 +19,17 @@ import {
 import { AddRegular } from '@fluentui/react-icons';
 import { useAppToasts } from '../../components/toaster';
 import {
+  AttachmentStrip,
   ConnectionBanner,
+  DocumentFigureButton,
   GenerationControls,
+  ImageAttachButton,
   ResponseView,
+  useAttachmentsStore,
   useGeneration,
+  useImageAttach,
   useStreamStore,
+  useVisionModel,
 } from '../../features/ai';
 import { useHistoryStore } from '../../features/history';
 import { ContextSourcePicker, ResultActionsBar, useDocumentActions } from '../../features/document';
@@ -70,6 +76,12 @@ const useStyles = makeStyles({
   },
   inputArea: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS },
   chipRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' },
+  /** Drop feedback: the prompt box itself is the target, so it says so. */
+  dropTarget: {
+    outline: `2px dashed ${tokens.colorBrandStroke1}`,
+    outlineOffset: '2px',
+    borderRadius: tokens.borderRadiusMedium,
+  },
   clearRow: { display: 'flex', justifyContent: 'flex-end' },
   response: { flexGrow: 1, minHeight: 0 },
 });
@@ -119,6 +131,34 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
   };
 
   const actions = useDocumentActions();
+  const { attachFromTransfer, attachSelectionFigures } = useImageAttach();
+  const [dragging, setDragging] = useState(false);
+
+  /*
+   * Resolving images here, not in useGeneration (ADR-034).
+   *
+   * This view already decides which model a run uses; images are the same kind
+   * of decision, and it is also where the attachment strip and its capability
+   * warning are rendered. Deciding in one place means the pane cannot promise
+   * to send a picture that the request then drops.
+   */
+  const vision = useVisionModel();
+
+  /**
+   * Reads the staged images at call time rather than render time.
+   *
+   * The automatic path (ADR-035 amendment) stages a figure moments before the
+   * request is built, so a value captured during render would miss it — the
+   * store subscription has not re-rendered yet.
+   */
+  const resolveRunOptions = (): { model: string; images: string[] } | null => {
+    const staged = useAttachmentsStore.getState().images;
+    if (staged.length === 0 || vision.reason !== null) return null;
+    return {
+      model: vision.model ?? model ?? '',
+      images: staged.map((image) => image.dataBase64),
+    };
+  };
 
   const contextOptions = useMemo<readonly ContextSource[]>(() => {
     if (selectedPrompt === null) return ALL_SOURCES;
@@ -167,13 +207,35 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
         ? 'Write a prompt first'
         : undefined;
 
-  const handleGenerate = (): void => {
+  /**
+   * "Selection" means the whole selection, figures included (ADR-035
+   * amendment).
+   *
+   * Picking that chip is the user saying what they are pointing at; requiring
+   * a second, separate click to include a figure inside it made the tool
+   * pedantic about a distinction only it could see. Runs only for this chip —
+   * paragraph and whole-document contexts would drag in figures nobody asked
+   * about, and "none" means none.
+   */
+  const stageSelectionFigures = async (): Promise<void> => {
+    if (contextSource !== 'selection') return;
+    await attachSelectionFigures();
+  };
+
+  const handleGenerate = async (): Promise<void> => {
     if (active) return;
     if (generateDisabledReason !== undefined || model === null) {
       if (generateDisabledReason !== undefined) toasts.info(generateDisabledReason);
       return;
     }
-    void generation.generate({ template: selectedPrompt, draft, contextSource, model });
+    await stageSelectionFigures();
+    await generation.generate({
+      template: selectedPrompt,
+      draft,
+      contextSource,
+      model,
+      ...resolveRunOptions(),
+    });
   };
 
   /**
@@ -181,23 +243,34 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
    * appended chat turn (ADR-021): it produces its own record with its own
    * sources, so provenance never blurs across runs.
    */
-  const handleRefine = (): void => {
+  const handleRefine = async (): Promise<void> => {
     if (active || model === null || streamText === '') return;
     if (draft.trim() === '') {
       toasts.info('Say how to change it — for example “make it shorter”.');
       return;
     }
-    void generation.generate({
+    await stageSelectionFigures();
+    await generation.generate({
       template: selectedPrompt,
       draft,
       contextSource,
       model,
       priorResult: streamText,
+      ...resolveRunOptions(),
     });
   };
 
+  // The handlers are async now (they may read a figure out of the selection
+  // first); these call sites all expect a plain void callback.
+  const startGenerate = (): void => {
+    void handleGenerate();
+  };
+  const startRefine = (): void => {
+    void handleRefine();
+  };
+
   useKeyboardShortcuts({
-    onGenerate: handleGenerate,
+    onGenerate: startGenerate,
     onStop: generation.stop,
     ...(streamText === ''
       ? {}
@@ -228,6 +301,7 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
       ) : null}
       <div className={styles.inputArea}>
         <Textarea
+          className={dragging ? styles.dropTarget : undefined}
           aria-label="Prompt"
           placeholder="Ask anything, or pick a prompt template…"
           value={draft}
@@ -236,18 +310,50 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
           onChange={(_, data) => {
             setDraft(data.value);
           }}
+          /*
+           * Paste and drop are handled here rather than on the whole pane so
+           * they cannot swallow a paste meant for another field. Both defer to
+           * the default when the payload holds no image: pasting text into the
+           * prompt box must keep working, and `preventDefault` runs only once
+           * an image has actually been found.
+           */
+          onPaste={(event) => {
+            const { clipboardData } = event;
+            if (Array.from(clipboardData.files).every((file) => !file.type.startsWith('image/'))) {
+              return;
+            }
+            event.preventDefault();
+            void attachFromTransfer(clipboardData);
+          }}
+          onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => {
+            setDragging(false);
+          }}
+          onDrop={(event) => {
+            if (!event.dataTransfer.types.includes('Files')) return;
+            event.preventDefault();
+            setDragging(false);
+            void attachFromTransfer(event.dataTransfer);
+          }}
         />
+        <AttachmentStrip />
         <div className={styles.chipRow}>
           <ContextSourcePicker
             value={contextSource}
             options={contextOptions}
             onChange={setContextSource}
           />
+          <ImageAttachButton disabled={active} />
+          <DocumentFigureButton available={hostInfo.available} disabled={active} />
         </div>
       </div>
       <div className={compact ? styles.stickyControls : undefined}>
         <GenerationControls
-          onGenerate={handleGenerate}
+          onGenerate={startGenerate}
           onStop={generation.stop}
           generateDisabledReason={generateDisabledReason}
         />
@@ -265,7 +371,7 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
       <ResultActionsBar
         text={streamText}
         record={activeRecord}
-        onRefine={handleRefine}
+        onRefine={startRefine}
         refineDisabled={active}
         compact={compact}
       />

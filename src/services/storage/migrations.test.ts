@@ -10,6 +10,7 @@ import {
   settingsV2ToV3,
   settingsV3ToV4,
   settingsV4ToV5,
+  settingsV5ToV6,
 } from './migrations';
 
 interface HistoryShape {
@@ -291,5 +292,36 @@ describe('settingsV4ToV5', () => {
   it('passes through anything that is not an object', () => {
     expect(settingsV4ToV5('nonsense')).toBe('nonsense');
     expect(settingsV4ToV5(null)).toBeNull();
+  });
+});
+
+describe('settingsV5ToV6', () => {
+  it('adds visionModel as null — "use the general model"', () => {
+    // A v5 payload predates the field, so every existing install lands exactly
+    // where a fresh one does (ADR-034).
+    expect(settingsV5ToV6({ ollamaUrl: 'http://x' })).toEqual({
+      ollamaUrl: 'http://x',
+      visionModel: null,
+    });
+  });
+
+  it('never guesses at an installed vision model', () => {
+    // A migration that silently pointed generation at a different model than
+    // the one the user picked would be a surprise arriving through an upgrade.
+    const migrated = settingsV5ToV6({ defaultModel: 'qwen3:8b' }) as Record<string, unknown>;
+    expect(migrated.visionModel).toBeNull();
+    expect(migrated.defaultModel).toBe('qwen3:8b');
+  });
+
+  it('leaves an existing value alone, including an explicit null', () => {
+    expect(settingsV5ToV6({ visionModel: 'llama3.2-vision' })).toEqual({
+      visionModel: 'llama3.2-vision',
+    });
+    expect(settingsV5ToV6({ visionModel: null })).toEqual({ visionModel: null });
+  });
+
+  it('passes through anything that is not an object', () => {
+    expect(settingsV5ToV6('nonsense')).toBe('nonsense');
+    expect(settingsV5ToV6(null)).toBeNull();
   });
 });

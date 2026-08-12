@@ -33,6 +33,12 @@ export interface OllamaModelDetails {
   family: string | null;
   parameterSize: string | null;
   quantizationLevel: string | null;
+  /**
+   * `gguf` for a library pull, `safetensors` for a locally imported/converted
+   * build, null when unreported. Surfaced because it is the usual explanation
+   * when a multimodal model family reports no `vision` capability (ADR-034).
+   */
+  format: string | null;
   /** Maximum context window the model supports, when reported. */
   contextLength: number | null;
   /** Capability flags reported by Ollama (e.g. `completion`, `tools`). */
@@ -49,10 +55,26 @@ export interface OllamaOptions {
   num_ctx: number;
 }
 
+/**
+ * One message on the wire. `images` is Ollama's own per-message shape (ADR-034):
+ * base64 payloads with no `data:` prefix, omitted entirely when there are none.
+ *
+ * Deliberately not a general content-part model (`content: string | Part[]`) of
+ * the kind provider-agnostic SDKs use. There is one provider (ARCH §13.5), and a
+ * richer internal shape that only gets flattened back at the wire would be an
+ * abstraction generalized from a single case.
+ */
+export interface ChatMessage {
+  role: Role;
+  content: string;
+  /** Base64 images for vision models; key absent when none are attached. */
+  images?: string[];
+}
+
 /** Request body for `POST /api/chat`. */
 export interface ChatRequest {
   model: string;
-  messages: { role: Role; content: string }[];
+  messages: ChatMessage[];
   options: OllamaOptions;
   stream: boolean;
 }

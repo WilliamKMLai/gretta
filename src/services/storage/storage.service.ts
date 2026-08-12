@@ -19,6 +19,7 @@ import {
   settingsV2ToV3,
   settingsV3ToV4,
   settingsV4ToV5,
+  settingsV5ToV6,
 } from './migrations';
 import type { StorageKey, StorageService } from './storage.types';
 
@@ -41,6 +42,7 @@ const MIGRATIONS: Partial<Record<StorageKey, Record<number, Migration>>> = {
     2: settingsV2ToV3,
     3: settingsV3ToV4,
     4: settingsV4ToV5,
+    5: settingsV5ToV6,
   },
 };
 
