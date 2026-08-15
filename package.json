@@ -41,6 +41,7 @@
     "@fluentui/react-components": "^9.60.0",
     "@fluentui/react-icons": "^2.0.333",
     "@hookform/resolvers": "^5.0.0",
+    "@napi-rs/canvas": "^1.0.5",
     "@tanstack/react-query": "^5.66.0",
     "better-sqlite3": "^13.0.1",
     "fast-xml-parser": "^5.10.1",

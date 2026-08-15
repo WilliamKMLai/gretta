@@ -18,7 +18,7 @@ import type { ChunkRow, CollectionRow, SqliteStore } from './store.sqlite.mts';
 const DEFAULTS: QueryDefaults = { topK: 8, minScore: 0 };
 
 function collectionRow(id: string, embeddingModel: string): CollectionRow {
-  return { id, name: id, folders: [], embeddingModel, lastIndexedAt: null };
+  return { id, name: id, folders: [], embeddingModel, indexFigures: false, lastIndexedAt: null };
 }
 
 /**
@@ -45,6 +45,13 @@ function createFakeStore(collections: CollectionRow[]) {
       rowIds: [rowIdFor(ids[0] ?? '')],
       dims: 2,
     })),
+    replaceFigures: vi.fn(),
+    figureCounts: vi.fn(() => ({ total: 0, described: 0 })),
+    getFigure: vi.fn(() => null),
+    saveFigureImage: vi.fn(),
+    saveFigureDescription: vi.fn(),
+    updateChunkForFigure: vi.fn(),
+    undescribedFigures: vi.fn(() => []),
     chunksByRowIds: vi.fn((rowIds: number[]): ChunkRow[] =>
       rowIds.map((rowId) => ({
         rowId,

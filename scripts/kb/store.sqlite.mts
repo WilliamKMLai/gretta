@@ -28,6 +28,7 @@
 import DatabaseConstructor from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { createHash } from 'node:crypto';
+import { TARGET_VERSION, isFromFuture, migrate, schemaVersion } from './migrate.mts';
 
 /** A chunk as stored: text, provenance, and its vector. */
 export interface StoredChunk {
@@ -36,6 +37,28 @@ export interface StoredChunk {
   paragraph: number | null;
   text: string;
   embedding: number[];
+  /** Set when this chunk is a figure's caption (ADR-036); null otherwise. */
+  figureId?: string | null;
+}
+
+/** A figure recorded at index time, described later on demand (ADR-036). */
+export interface StoredFigure {
+  id: string;
+  collectionId: string;
+  source: string;
+  /** The source file's hash when the figure was found — the cache key. */
+  contentHash: string;
+  page: number;
+  /** Region in PDF user space, JSON-encoded. */
+  bbox: string;
+  caption: string;
+  /** Null until something asks for this figure. */
+  description: string | null;
+  mediaType: string | null;
+  width: number | null;
+  height: number | null;
+  bytes: Buffer | null;
+  describedAt: string | null;
 }
 
 /** A stored chunk's row, identified by rowid, without its vector. */
@@ -46,6 +69,11 @@ export interface ChunkRow {
   page: number | null;
   paragraph: number | null;
   text: string;
+  /** Set when this chunk is a figure's caption (ADR-036). */
+  figureId?: string | null;
+  /** The figure's caption and whether it has been described, when linked. */
+  figureCaption?: string | null;
+  figureDescribed?: number | null;
 }
 
 /** Content hash of a file's bytes — the incremental-indexing key. */
@@ -98,6 +126,8 @@ export interface CollectionRow {
   name: string;
   folders: string[];
   embeddingModel: string;
+  /** Figure detection for this collection (ADR-036); stored as 0/1. */
+  indexFigures: boolean;
   lastIndexedAt: string | null;
 }
 
@@ -109,6 +139,22 @@ export class SqliteStore {
     this.db = new DatabaseConstructor(filename);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(SCHEMA);
+
+    /*
+     * Migrations run for everyone, including brand-new databases (ADR-036).
+     *
+     * A fresh file could have the newest schema baked straight into SCHEMA
+     * above, but then new and upgraded databases would reach the same version
+     * by two different routes — and only one of them would ever be exercised
+     * in development. Creating the base tables and then migrating means the
+     * upgrade path is the path every run takes.
+     */
+    if (isFromFuture(this.db)) {
+      throw new Error(
+        `${filename} was written by a newer version of GRETTA (schema v${String(schemaVersion(this.db))}, this build expects v${String(TARGET_VERSION)}). Update GRETTA, or move that file aside to start fresh.`,
+      );
+    }
+    migrate(this.db);
   }
 
   close(): void {
@@ -121,6 +167,7 @@ export class SqliteStore {
       name: string;
       folders: string;
       embeddingModel: string;
+      indexFigures: number | null;
       lastIndexedAt: string | null;
     }[];
     return rows.map((row) => ({
@@ -128,6 +175,7 @@ export class SqliteStore {
       name: row.name,
       folders: JSON.parse(row.folders) as string[],
       embeddingModel: row.embeddingModel,
+      indexFigures: row.indexFigures === 1,
       lastIndexedAt: row.lastIndexedAt,
     }));
   }
@@ -140,16 +188,27 @@ export class SqliteStore {
     const previous = this.getCollection(row.id);
     this.db
       .prepare(
-        `INSERT INTO collections (id, name, folders, embeddingModel, lastIndexedAt)
-         VALUES (@id, @name, @folders, @embeddingModel, NULL)
+        `INSERT INTO collections (id, name, folders, embeddingModel, indexFigures, lastIndexedAt)
+         VALUES (@id, @name, @folders, @embeddingModel, @indexFigures, NULL)
          ON CONFLICT(id) DO UPDATE SET
-           name = @name, folders = @folders, embeddingModel = @embeddingModel`,
+           name = @name, folders = @folders, embeddingModel = @embeddingModel,
+           indexFigures = @indexFigures`,
       )
-      .run({ ...row, folders: JSON.stringify(row.folders) });
+      .run({
+        ...row,
+        folders: JSON.stringify(row.folders),
+        indexFigures: row.indexFigures ? 1 : 0,
+      });
     // Vectors from a different model are not comparable — drop and rebuild.
-    if (previous !== null && previous.embeddingModel !== row.embeddingModel) {
-      this.clearCollection(row.id);
-    }
+    //
+    // Toggling figure detection forces the same rebuild (ADR-036), and for a
+    // structural reason rather than a numerical one: figure captions are their
+    // own chunks, so turning the switch either way changes which chunks exist.
+    // Leaving the old ones behind would mean captions retrievable with no
+    // figure attached, or figures with no chunk pointing at them.
+    const modelChanged = previous !== null && previous.embeddingModel !== row.embeddingModel;
+    const figuresToggled = previous !== null && previous.indexFigures !== row.indexFigures;
+    if (modelChanged || figuresToggled) this.clearCollection(row.id);
   }
 
   deleteCollection(id: string): void {
@@ -162,6 +221,7 @@ export class SqliteStore {
   clearCollection(id: string): void {
     this.db.prepare('DELETE FROM chunks WHERE collectionId = ?').run(id);
     this.db.prepare('DELETE FROM files WHERE collectionId = ?').run(id);
+    this.db.prepare('DELETE FROM figures WHERE collectionId = ?').run(id);
   }
 
   markIndexed(id: string, isoTimestamp: string): void {
@@ -208,8 +268,8 @@ export class SqliteStore {
   /** Replaces one file's chunks atomically and records its new hash. */
   replaceFile(collectionId: string, source: string, hash: string, chunks: StoredChunk[]): void {
     const insertChunk = this.db.prepare(
-      `INSERT INTO chunks (collectionId, source, page, paragraph, text, embedding)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO chunks (collectionId, source, page, paragraph, text, embedding, figureId)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     const run = this.db.transaction(() => {
       this.db
@@ -223,6 +283,7 @@ export class SqliteStore {
           chunk.paragraph,
           chunk.text,
           toBlob(chunk.embedding),
+          chunk.figureId ?? null,
         );
       }
       this.db
@@ -244,8 +305,112 @@ export class SqliteStore {
       this.db
         .prepare('DELETE FROM files WHERE collectionId = ? AND source = ?')
         .run(collectionId, source);
+      this.db
+        .prepare('DELETE FROM figures WHERE collectionId = ? AND source = ?')
+        .run(collectionId, source);
     });
     run();
+  }
+
+  /**
+   * Records figures found while indexing a file, keeping any work already done.
+   *
+   * The `ON CONFLICT` clause is the whole reason on-demand description is
+   * viable. A figure's id is derived from the source's content hash, its page,
+   * and its region, so re-indexing an *unchanged* file produces the same ids —
+   * and this refreshes the caption while leaving `description`, `bytes`, and
+   * `describedAt` alone. Without it every reindex would throw away work that
+   * cost ~16 seconds a figure to produce.
+   *
+   * A file whose bytes changed yields different ids, so its old figures are
+   * deleted here rather than lingering as orphans describing a previous draft.
+   */
+  replaceFigures(collectionId: string, source: string, figures: readonly StoredFigure[]): void {
+    const insert = this.db.prepare(
+      `INSERT INTO figures (id, collectionId, source, contentHash, page, bbox, caption,
+                            description, mediaType, width, height, bytes, describedAt)
+       VALUES (@id, @collectionId, @source, @contentHash, @page, @bbox, @caption,
+               NULL, NULL, NULL, NULL, NULL, NULL)
+       ON CONFLICT(id) DO UPDATE SET caption = excluded.caption`,
+    );
+    const run = this.db.transaction(() => {
+      const keep = new Set(figures.map((figure) => figure.id));
+      const existing = this.db
+        .prepare('SELECT id FROM figures WHERE collectionId = ? AND source = ?')
+        .all(collectionId, source) as { id: string }[];
+      const drop = this.db.prepare('DELETE FROM figures WHERE id = ?');
+      for (const row of existing) if (!keep.has(row.id)) drop.run(row.id);
+      for (const figure of figures) {
+        insert.run({
+          id: figure.id,
+          collectionId,
+          source,
+          contentHash: figure.contentHash,
+          page: figure.page,
+          bbox: figure.bbox,
+          caption: figure.caption,
+        });
+      }
+    });
+    run();
+  }
+
+  getFigure(collectionId: string, figureId: string): StoredFigure | null {
+    const row = this.db
+      .prepare('SELECT * FROM figures WHERE collectionId = ? AND id = ?')
+      .get(collectionId, figureId) as StoredFigure | undefined;
+    return row ?? null;
+  }
+
+  /** Figures of a collection that have never been described. */
+  undescribedFigures(collectionId: string, limit: number): StoredFigure[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM figures WHERE collectionId = ? AND describedAt IS NULL
+         ORDER BY source, page LIMIT ?`,
+      )
+      .all(collectionId, limit) as StoredFigure[];
+  }
+
+  /** Stores rendered pixels without touching the description. */
+  saveFigureImage(
+    figureId: string,
+    image: { mediaType: string; bytes: Buffer; width: number; height: number },
+  ): void {
+    this.db
+      .prepare('UPDATE figures SET mediaType = ?, bytes = ?, width = ?, height = ? WHERE id = ?')
+      .run(image.mediaType, image.bytes, image.width, image.height, figureId);
+  }
+
+  /** Stores a description and stamps it, so the work is never repeated. */
+  saveFigureDescription(figureId: string, description: string, isoTimestamp: string): void {
+    this.db
+      .prepare('UPDATE figures SET description = ?, describedAt = ? WHERE id = ?')
+      .run(description, isoTimestamp, figureId);
+  }
+
+  /**
+   * Re-embeds the one chunk belonging to a figure, in place.
+   *
+   * A described figure's chunk should retrieve on what the picture shows, not
+   * only on its caption. Updating the single row avoids re-indexing the file
+   * around it — but every caller must invalidate the packed query matrix
+   * afterwards, or the next search scans the vector this replaced.
+   */
+  updateChunkForFigure(figureId: string, text: string, embedding: number[]): void {
+    this.db
+      .prepare('UPDATE chunks SET text = ?, embedding = ? WHERE figureId = ?')
+      .run(text, toBlob(embedding), figureId);
+  }
+
+  figureCounts(collectionId: string): { total: number; described: number } {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total, COUNT(describedAt) AS described
+         FROM figures WHERE collectionId = ?`,
+      )
+      .get(collectionId) as { total: number; described: number };
+    return row;
   }
 
   counts(collectionId: string): { fileCount: number; chunkCount: number } {
@@ -329,8 +494,11 @@ export class SqliteStore {
     const placeholders = rowIds.map(() => '?').join(',');
     return this.db
       .prepare(
-        `SELECT rowid AS rowId, collectionId, source, page, paragraph, text
-         FROM chunks WHERE rowid IN (${placeholders})`,
+        `SELECT c.rowid AS rowId, c.collectionId, c.source, c.page, c.paragraph, c.text,
+                c.figureId, f.caption AS figureCaption,
+                CASE WHEN f.describedAt IS NULL THEN 0 ELSE 1 END AS figureDescribed
+         FROM chunks c LEFT JOIN figures f ON f.id = c.figureId
+         WHERE c.rowid IN (${placeholders})`,
       )
       .all(...rowIds) as ChunkRow[];
   }

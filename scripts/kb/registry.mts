@@ -14,6 +14,7 @@ import type {
   QueryDefaults,
   RetrievedChunk,
 } from '../../src/types/knowledgebase';
+import type { FigureImageResult } from './figure-service.mts';
 import { CollectionIndexer } from './index-store.mts';
 import type { SqliteStore } from './store.sqlite.mts';
 
@@ -46,6 +47,7 @@ export class CollectionRegistry {
             name: row.name,
             folders: row.folders,
             embeddingModel: row.embeddingModel,
+            indexFigures: row.indexFigures,
           },
           store,
           defaults,
@@ -118,6 +120,15 @@ export class CollectionRegistry {
    * it never triggered an embed call; letting one lead a group would load a
    * cold embedding model to produce a vector nothing consumes.
    */
+  /** A figure's pixels from one collection, rendered on first use (ADR-036). */
+  async figureImage(
+    collectionId: string,
+    figureId: string,
+    visionModel: string,
+  ): Promise<FigureImageResult | null> {
+    return (await this.get(collectionId)?.figureImage(figureId, visionModel)) ?? null;
+  }
+
   async query(collectionIds: string[], text: string, k?: number): Promise<RetrievedChunk[]> {
     const limit = k ?? this.defaults.topK;
     if (text.trim() === '') return [];

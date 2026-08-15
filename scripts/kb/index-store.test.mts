@@ -22,7 +22,14 @@ import { fingerprintMacroTable } from './tex/macros.mts';
 const DEFAULTS: QueryDefaults = { topK: 8, minScore: 0 };
 
 function config(overrides: Partial<CollectionConfig> = {}): CollectionConfig {
-  return { id: 'a', name: 'A', folders: [], embeddingModel: 'm1', ...overrides };
+  return {
+    id: 'a',
+    name: 'A',
+    folders: [],
+    embeddingModel: 'm1',
+    indexFigures: false,
+    ...overrides,
+  };
 }
 
 function createFakeStore(options: { indexedSources?: string[]; fileHash?: string | null } = {}) {
@@ -39,6 +46,13 @@ function createFakeStore(options: { indexedSources?: string[]; fileHash?: string
     getTexMacroHash: vi.fn(() => null as string | null),
     setTexMacroHash: vi.fn(),
     chunkVectors: vi.fn(() => ({ matrix: new Float32Array(0), rowIds: [] as number[], dims: 0 })),
+    replaceFigures: vi.fn(),
+    figureCounts: vi.fn(() => ({ total: 0, described: 0 })),
+    getFigure: vi.fn(() => null),
+    saveFigureImage: vi.fn(),
+    saveFigureDescription: vi.fn(),
+    updateChunkForFigure: vi.fn(),
+    undescribedFigures: vi.fn(() => []),
     chunksByRowIds: vi.fn((rowIds: number[]): ChunkRow[] => {
       void rowIds;
       return [];

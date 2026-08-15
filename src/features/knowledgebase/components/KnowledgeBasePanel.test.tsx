@@ -31,6 +31,9 @@ const collection: CollectionStatus = {
   skipped: [],
   lastIndexedAt: '2026-07-22T00:00:00.000Z',
   message: null,
+  indexFigures: false,
+  figureCount: 0,
+  describedFigureCount: 0,
 };
 
 const stubKb = (overrides: Partial<KnowledgeBaseClient> = {}): KnowledgeBaseClient => ({
@@ -39,6 +42,7 @@ const stubKb = (overrides: Partial<KnowledgeBaseClient> = {}): KnowledgeBaseClie
   upsertCollection: () => Promise.resolve(collection),
   deleteCollection: () => Promise.resolve(),
   reindexCollection: () => Promise.resolve(collection),
+  getFigure: vi.fn(() => Promise.resolve(null)),
   pickFolder: () => Promise.resolve({ ok: false, reason: 'unsupported' as const }),
   query: () => Promise.resolve([]),
   ...overrides,
@@ -199,9 +203,42 @@ describe('KnowledgeBasePanel', () => {
     expect(await screen.findByText(/re-indexes this collection from scratch/i)).toBeInTheDocument();
   });
 
-  it('marks both new-collection fields as required', async () => {
+  /*
+   * Asserted through `aria-expanded` rather than by looking for the fields:
+   * Fluent keeps an AccordionPanel's children mounted and merely hides them,
+   * so presence in the DOM says nothing about whether anyone can see them.
+   */
+  it('collapses the add form when collections already exist', async () => {
+    // The panel's job once a knowledge base is set up is showing what is in
+    // it; the add form is occasional and should not cost that space on every
+    // visit.
     render(wrap(<KnowledgeBasePanel />));
-    expect(await screen.findByText(/both fields are required/i)).toBeInTheDocument();
+    const header = await screen.findByRole('button', { name: /add a collection/i });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('opens the add form when there are no collections yet', async () => {
+    // Adding one is then the only thing to do, and hiding the sole available
+    // action behind a click is the opposite of decluttering.
+    setServices({ kb: stubKb({ listCollections: () => Promise.resolve([]) }) });
+    render(wrap(<KnowledgeBasePanel />));
+    const header = await screen.findByRole('button', { name: /add a collection/i });
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('opens the add form when its header is clicked', async () => {
+    render(wrap(<KnowledgeBasePanel />));
+    const header = await screen.findByRole('button', { name: /add a collection/i });
+    await userEvent.click(header);
+    expect(header).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('marks both new-collection fields as required', async () => {
+    // Rendered with no collections so the form is open — this is about what
+    // the form says, not about whether it is showing.
+    setServices({ kb: stubKb({ listCollections: () => Promise.resolve([]) }) });
+    render(wrap(<KnowledgeBasePanel />));
+    expect(await screen.findByText(/name and folder are required/i)).toBeInTheDocument();
     expect(screen.getByText(/give the collection a name/i)).toBeInTheDocument();
     expect(screen.getByText(/paste the absolute path/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add collection/i })).toBeDisabled();

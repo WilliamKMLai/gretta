@@ -151,12 +151,22 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
    * request is built, so a value captured during render would miss it — the
    * store subscription has not re-rendered yet.
    */
-  const resolveRunOptions = (): { model: string; images: string[] } | null => {
+  const resolveRunOptions = (): {
+    model: string;
+    images?: string[];
+    visionModel: string | null;
+  } | null => {
+    // A run with no attachments can still carry figures the knowledge base
+    // retrieves (ADR-036), so the vision model is resolved either way — but the
+    // run is only *routed* to it when there is actually something to look at.
+    const canSee = vision.supportsVision && vision.model !== null;
     const staged = useAttachmentsStore.getState().images;
-    if (staged.length === 0 || vision.reason !== null) return null;
+    const sendAttached = staged.length > 0 && vision.reason === null;
+    if (!canSee && !sendAttached) return null;
     return {
-      model: vision.model ?? model ?? '',
-      images: staged.map((image) => image.dataBase64),
+      model: sendAttached ? (vision.model ?? model ?? '') : (model ?? ''),
+      ...(sendAttached ? { images: staged.map((image) => image.dataBase64) } : {}),
+      visionModel: canSee ? vision.model : null,
     };
   };
 

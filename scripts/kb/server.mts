@@ -142,6 +142,9 @@ function parseConfig(body: unknown): CollectionConfig | string {
       typeof raw.embeddingModel === 'string' && raw.embeddingModel !== ''
         ? raw.embeddingModel
         : env('GRETTA_KB_EMBED_MODEL', 'nomic-embed-text:latest'),
+    // Absent reads as off: an older pane never sends it, and figures must
+    // never switch themselves on (ADR-036).
+    indexFigures: raw.indexFigures === true,
   };
 }
 
@@ -173,6 +176,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       // button before anyone clicks it, and a button that opens nothing is
       // worse than no button (ADR-033).
       pickFolder: isPickFolderSupported(),
+      // This build can render and describe figures (ADR-036). Advertised for
+      // the same reason as pickFolder: the pane decides whether to offer the
+      // per-collection switch before anyone touches it, and an older
+      // companion that omits the field reads as "no figures".
+      describeFigures: true,
     });
     return;
   }
@@ -226,6 +234,31 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
      * unsupported platform are outcomes, not failures.
      */
     sendJson(res, 200, await pickFolder());
+    return;
+  }
+  /*
+   * `GET /figures/:collectionId/:figureId` — pixels, rendered on first ask.
+   *
+   * JSON rather than `image/png`, for consistency with every other endpoint
+   * (all Zod-validated on the pane side) and because the pane needs base64
+   * anyway to hand the figure to Ollama. Serving raw bytes would mean
+   * converting them straight back.
+   *
+   * The vision model rides in as a query parameter: the companion has no
+   * settings of its own, and which model can see is the pane's knowledge.
+   */
+  const figureMatch = /^\/figures\/([^/]+)\/([^/]+)$/u.exec(path);
+  if (method === 'GET' && figureMatch !== null) {
+    const collectionId = decodeURIComponent(figureMatch[1] ?? '');
+    const figureId = decodeURIComponent(figureMatch[2] ?? '');
+    const query = (req.url ?? '').split('?')[1] ?? '';
+    const visionModel = new URLSearchParams(query).get('visionModel') ?? '';
+    const image = await registry.figureImage(collectionId, figureId, visionModel);
+    if (image === null) {
+      sendJson(res, 404, { error: 'no such figure, or it could not be rendered' });
+      return;
+    }
+    sendJson(res, 200, image);
     return;
   }
   if (method === 'POST' && path === '/query') {

@@ -13,6 +13,7 @@
 import type {
   CollectionConfig,
   CollectionStatus,
+  FigureImage,
   KnowledgeBaseHealth,
   PickFolderResult,
   RetrievedChunk,
@@ -58,6 +59,24 @@ export interface KnowledgeBaseClient {
    * the companion is unreachable; a failed retrieval must never break generation
    * (ADR-020), so callers treat "no companion" as "no extra context".
    */
+  /**
+   * `GET /figures/:collectionId/:figureId` — a figure's pixels (ADR-036).
+   *
+   * Rendered by the companion on first request and cached, so this is fast
+   * afterwards. `visionModel` is passed through because the companion has no
+   * settings of its own; it uses the model to describe the figure in the
+   * background, which improves how well that figure is found next time.
+   *
+   * Resolves null when the figure is unknown or its source file has moved —
+   * a missing picture, never a failed generation.
+   */
+  getFigure(
+    collectionId: string,
+    figureId: string,
+    visionModel: string,
+    signal?: AbortSignal,
+  ): Promise<FigureImage | null>;
+
   query(
     query: string,
     collectionIds: string[],

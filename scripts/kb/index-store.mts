@@ -27,6 +27,9 @@ import type {
 } from '../../src/types/knowledgebase';
 import { DEFAULT_CHUNK_OPTIONS, chunkBlocks } from './chunk.mts';
 import { EmbedUnreachableError, createEmbedder } from './embedder.mts';
+import { createDescriber } from './describer.mts';
+import { describeFigure, materializeFigure, sourceResolver } from './figure-service.mts';
+import type { FigureImageResult } from './figure-service.mts';
 import { isSupported, parseFile } from './parse.mts';
 import { topKPacked } from './score.mts';
 import { contentHash, type SqliteStore, type StoredChunk } from './store.sqlite.mts';
@@ -107,12 +110,16 @@ export class CollectionIndexer {
 
   status(): CollectionStatus {
     const { fileCount, chunkCount } = this.store.counts(this.config.id);
+    const figures = this.store.figureCounts(this.config.id);
     const row = this.store.getCollection(this.config.id);
     return {
       id: this.config.id,
       name: this.config.name,
       folders: [...this.config.folders],
       embeddingModel: this.config.embeddingModel,
+      indexFigures: this.config.indexFigures,
+      figureCount: figures.total,
+      describedFigureCount: figures.described,
       phase: this.phase,
       fileCount,
       chunkCount,
@@ -130,6 +137,7 @@ export class CollectionIndexer {
     this.config = config;
     this.store.upsertCollection({
       id: config.id,
+      indexFigures: config.indexFigures,
       name: config.name,
       folders: config.folders,
       embeddingModel: config.embeddingModel,
@@ -217,7 +225,12 @@ export class CollectionIndexer {
         continue; // unchanged — the whole point of incremental indexing
       }
 
-      const parsed = await parseFile(file.absolute, { texMacros });
+      const parsed = await parseFile(file.absolute, {
+        texMacros,
+        // Passing the hash is what enables figure detection (ADR-036); a
+        // collection with figures off simply does not pass it.
+        ...(this.config.indexFigures ? { contentHash: hash } : {}),
+      });
       if (!parsed.ok) {
         this.skip(file.source, parsed.reason);
         continue;
@@ -236,6 +249,7 @@ export class CollectionIndexer {
               paragraph: chunk.paragraph,
               text: chunk.text,
               embedding: vectors[i] ?? [],
+              figureId: chunk.figureId ?? null,
             });
           });
         }
@@ -252,6 +266,31 @@ export class CollectionIndexer {
         continue;
       }
       this.store.replaceFile(this.config.id, file.source, hash, stored);
+      // Recorded from the caption alone — no canvas, no vision model. Pixels
+      // and descriptions arrive only when something asks (ADR-036). Skipped
+      // outright when the collection has figures off, so a text-only corpus
+      // pays no transaction per file.
+      if (this.config.indexFigures) {
+        this.store.replaceFigures(
+          this.config.id,
+          file.source,
+          (parsed.figures ?? []).map((found) => ({
+            id: found.id,
+            collectionId: this.config.id,
+            source: file.source,
+            contentHash: hash,
+            page: found.anchor.page,
+            bbox: JSON.stringify(found.anchor.region),
+            caption: found.anchor.caption,
+            description: null,
+            mediaType: null,
+            width: null,
+            height: null,
+            bytes: null,
+            describedAt: null,
+          })),
+        );
+      }
       this.invalidateQueryMatrix();
       this.emit({ type: 'file', path: file.source, filesDone: done, totalFiles: files.length });
     }
@@ -276,6 +315,41 @@ export class CollectionIndexer {
    * of (model, text), so collections that declare the same model would each
    * have computed exactly this. An embed failure still throws.
    */
+  /**
+   * A figure's pixels, rendering them if this is the first request (ADR-036).
+   *
+   * The description is kicked off but never awaited: the caller needs the
+   * picture now, and the vision model it is about to reach is going to read
+   * that picture directly. Describing first would be the same work twice, at
+   * roughly 16 seconds of extra latency, to produce text this answer does not
+   * need. It runs detached so the *next* search finds this figure better.
+   */
+  async figureImage(figureId: string, visionModel: string): Promise<FigureImageResult | null> {
+    const figure = this.store.getFigure(this.config.id, figureId);
+    if (figure === null) return null;
+
+    const context = {
+      collectionId: this.config.id,
+      resolveSource: sourceResolver(this.config.folders),
+      embedder: createEmbedder(this.config.embeddingModel, this.ollamaUrl),
+      describer: createDescriber(visionModel, this.ollamaUrl),
+      invalidate: () => {
+        this.invalidateQueryMatrix();
+      },
+    };
+
+    const image = await materializeFigure(this.store, context, figure);
+    if (image === null) return null;
+
+    if (figure.describedAt === null && visionModel !== '') {
+      void describeFigure(this.store, context, figure, image.dataBase64).catch(() => {
+        // Already swallowed inside; this guard only stops an unhandled
+        // rejection from taking down the companion.
+      });
+    }
+    return image;
+  }
+
   async embedQuery(text: string): Promise<number[] | null> {
     if (text.trim() === '') return null;
     const embedder = createEmbedder(this.config.embeddingModel, this.ollamaUrl);
@@ -319,6 +393,17 @@ export class CollectionIndexer {
         locator: { page: row.page, paragraph: row.paragraph },
         text: row.text,
         score: match.score,
+        // Only the pointer travels with a query result; the pane fetches
+        // pixels separately, and only for figures it will actually use.
+        ...(row.figureId === null || row.figureId === undefined
+          ? {}
+          : {
+              figure: {
+                id: row.figureId,
+                caption: row.figureCaption ?? row.text,
+                described: row.figureDescribed === 1,
+              },
+            }),
       });
     }
     return results;

@@ -37,6 +37,7 @@ import { useSettingsStore } from '../settings';
 import { useKnowledgeBaseStore } from '../knowledgebase';
 import { assembleContextText, collectSources, runContextProviders } from './context/provider';
 import { allocateBudget, describeBudget } from './context/budget';
+import { MAX_RUN_FIGURES, fetchRunFigures } from './context/figures';
 import { useCalibrationStore } from './calibration.store';
 import { createKnowledgeBaseProvider } from './context/knowledgeBaseProvider';
 import { buildChatRequest, type GenerationInput, type RetrievedContext } from './request';
@@ -109,7 +110,7 @@ export function useGeneration(): UseGenerationResult {
        * time it reaches here, `input.model` IS the model that will answer —
        * history, calibration, and the budget all follow from that one fact.
        */
-      const imageCount = input.images?.length ?? 0;
+      const attachedImages = input.images?.length ?? 0;
 
       // §16 pipeline: gather optional extra context (RAG) before building the
       // request. Bounded by its own signal so a slow companion can't stall the
@@ -137,6 +138,27 @@ export function useGeneration(): UseGenerationResult {
       // reaches storage — history is capped at 200 records in browser storage,
       // and a whole-document capture could evict the rest on its own.
       const excerpt = documentContext === null ? null : toContextExcerpt(documentContext);
+      /*
+       * Figures are charged to the budget before they are fetched.
+       *
+       * They cannot be fetched first — budgeting decides which chunks survive,
+       * and a figure belonging to a trimmed chunk must not be sent. So the
+       * count is an upper bound taken from the retrieved chunks, capped at
+       * MAX_RUN_FIGURES. Over-reserving costs at most one excerpt;
+       * under-reserving means Ollama silently trims the prompt's front, which
+       * is the failure ADR-025 exists to prevent.
+       */
+      const canSeeFigures = input.visionModel !== undefined && input.visionModel !== null;
+      const figuresInPlay = !canSeeFigures
+        ? 0
+        : Math.min(
+            MAX_RUN_FIGURES,
+            blocks.reduce(
+              (sum, block) => sum + block.sources.filter((s) => s.figure !== undefined).length,
+              0,
+            ),
+          );
+
       const budget = allocateBudget({
         contextLength: settings.contextLength,
         reservePct: settings.responseReservePct,
@@ -144,7 +166,7 @@ export function useGeneration(): UseGenerationResult {
         documentContext,
         blocks,
         charsPerToken,
-        imageCount,
+        imageCount: attachedImages + figuresInPlay,
       });
 
       if (budget.overflow) {
@@ -155,6 +177,13 @@ export function useGeneration(): UseGenerationResult {
         return;
       }
 
+      // Fetched here — after budgeting fixed which chunks survive, before the
+      // request is built from them.
+      const sources = collectSources(budget.blocks);
+      const runFigures = !canSeeFigures
+        ? []
+        : await fetchRunFigures(sources, input.visionModel ?? null, contextController.signal);
+
       const budgetedVars: PromptVars =
         input.contextSource === 'none' || budget.documentContext === documentContext
           ? vars
@@ -163,7 +192,9 @@ export function useGeneration(): UseGenerationResult {
         budget.blocks.length === 0 ? null : { text: assembleContextText(budget.blocks) };
 
       const request = buildChatRequest(
-        input,
+        runFigures.length === 0
+          ? input
+          : { ...input, images: [...(input.images ?? []), ...runFigures.map((f) => f.dataBase64)] },
         budgetedVars,
         {
           temperature: settings.temperature,
@@ -176,7 +207,6 @@ export function useGeneration(): UseGenerationResult {
         retrieved,
       );
 
-      const sources = collectSources(budget.blocks);
       const controller = new AbortController();
       controllerRef.current = controller;
       useStreamStore.getState().start({

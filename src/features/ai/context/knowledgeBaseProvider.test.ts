@@ -24,6 +24,7 @@ function stubKb(query: KnowledgeBaseClient['query']): void {
     upsertCollection: vi.fn(),
     deleteCollection: vi.fn(),
     reindexCollection: vi.fn(),
+    getFigure: vi.fn(() => Promise.resolve(null)),
     pickFolder: vi.fn(),
     query,
   };

@@ -17,6 +17,10 @@
 import { useState } from 'react';
 import type { ReactElement } from 'react';
 import {
+  Accordion,
+  AccordionHeader,
+  AccordionItem,
+  AccordionPanel,
   Body1Strong,
   Button,
   Caption1,
@@ -25,6 +29,7 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
+  Switch,
   Text,
   makeStyles,
   tokens,
@@ -45,6 +50,8 @@ const useStyles = makeStyles({
   section: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   dataDir: { color: tokens.colorNeutralForeground3, wordBreak: 'break-all' },
   addRow: { display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'flex-end' },
+  /** The form's fields, indented under the disclosure so they read as its contents. */
+  addForm: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
   muted: { color: tokens.colorNeutralForeground3 },
 });
 
@@ -69,6 +76,23 @@ export function KnowledgeBasePanel(): ReactElement {
   const [name, setName] = useState('');
   const [folder, setFolder] = useState('');
   const [busy, setBusy] = useState(false);
+  /*
+   * Set at creation, not afterwards (ADR-036 amendment).
+   *
+   * Turning figures on later forces a full rebuild — figure captions are their
+   * own chunks, so the chunk set genuinely changes. Deciding here means the
+   * first index is the right one and that cost is never paid at all.
+   */
+  const [indexFigures, setIndexFigures] = useState(false);
+  /**
+   * Null until the user touches the disclosure; the default is derived below.
+   *
+   * Controlled rather than `defaultOpenItems`, because that is read once at
+   * mount — when the collections query is still in flight and the list is
+   * therefore empty. The form would have opened every single time, which is
+   * exactly the behaviour this was meant to remove.
+   */
+  const [addOpen, setAddOpen] = useState<boolean | null>(null);
 
   const refresh = (): void => {
     void collections.refetch();
@@ -80,6 +104,12 @@ export function KnowledgeBasePanel(): ReactElement {
   // incomplete — a user with an unusual model must not be locked out.
   const embeddingModels = filterEmbeddingModels(installedModels);
   const folderProblem = describeFolderProblem(folder);
+  /*
+   * Closed until the collections query answers, so a form that is about to
+   * close does not flash open first. Once the answer is in, an empty knowledge
+   * base opens it — adding a collection is then the only thing to do.
+   */
+  const addFormOpen = addOpen ?? (collections.isSuccess && collections.data.length === 0);
 
   const addCollection = async (): Promise<void> => {
     if (name.trim() === '' || folder.trim() === '') return;
@@ -90,9 +120,11 @@ export function KnowledgeBasePanel(): ReactElement {
         name: name.trim(),
         folders: [folder.trim()],
         embeddingModel: defaultModel,
+        indexFigures,
       });
       setName('');
       setFolder('');
+      setIndexFigures(false);
       refresh();
     } finally {
       setBusy(false);
@@ -229,54 +261,95 @@ export function KnowledgeBasePanel(): ReactElement {
         ))}
       </section>
 
-      <section className={styles.section}>
-        <Body1Strong>Add a collection</Body1Strong>
-        <Text size={200} className={styles.muted}>
-          Both fields are required.
-        </Text>
-        <Field
-          label="Name"
-          required
-          validationState={name.trim() === '' ? 'warning' : 'none'}
-          validationMessage={name.trim() === '' ? 'Give the collection a name.' : null}
-        >
-          <Input
-            value={name}
-            onChange={(_, data) => {
-              setName(data.value);
-            }}
-            placeholder="Reference library"
-          />
-        </Field>
-        <Field
-          label="Folder"
-          required
-          hint="Choose one below, or paste the full path — the pane itself cannot open a picker, so the button asks the companion to."
-          validationState={folderProblem === null ? 'none' : 'warning'}
-          validationMessage={folderProblem}
-        >
-          <Input
-            value={folder}
-            onChange={(_, data) => {
-              setFolder(data.value);
-            }}
-            placeholder="/Users/you/Documents/References"
-          />
-        </Field>
-        <div className={styles.addRow}>
-          <FolderPickerButton onPicked={setFolder} disabled={busy} />
-          <Button
-            appearance="primary"
-            icon={<AddRegular />}
-            disabled={busy || name.trim() === '' || folderProblem !== null}
-            onClick={() => {
-              void addCollection();
-            }}
-          >
-            Add collection
-          </Button>
-        </div>
-      </section>
+      {/*
+        Collapsed once collections exist, expanded when there are none.
+        Everything in this panel was previously the same weight, so the fields
+        below — the figures switch especially — did not read as belonging to
+        the add form at all. A disclosure gives them one container and one
+        heading, and reclaims the space they occupied on every visit.
+
+        Open on an empty knowledge base because adding a collection is then the
+        only thing to do, and hiding the sole available action behind a click
+        is the opposite of decluttering (the same reasoning as the literature
+        panel's "Recent searches").
+      */}
+      <Accordion
+        collapsible
+        openItems={addFormOpen ? ['add-collection'] : []}
+        onToggle={(_, data) => {
+          setAddOpen(data.openItems.includes('add-collection'));
+        }}
+      >
+        <AccordionItem value="add-collection">
+          <AccordionHeader size="small">
+            <Body1Strong>Add a collection</Body1Strong>
+          </AccordionHeader>
+          <AccordionPanel>
+            <div className={styles.addForm}>
+              <Text size={200} className={styles.muted}>
+                Name and folder are required.
+              </Text>
+              <Field
+                label="Name"
+                required
+                validationState={name.trim() === '' ? 'warning' : 'none'}
+                validationMessage={name.trim() === '' ? 'Give the collection a name.' : null}
+              >
+                <Input
+                  value={name}
+                  onChange={(_, data) => {
+                    setName(data.value);
+                  }}
+                  placeholder="Reference library"
+                />
+              </Field>
+              <Field
+                label="Folder"
+                required
+                hint="Choose one below, or paste the full path — the pane itself cannot open a picker, so the button asks the companion to."
+                validationState={folderProblem === null ? 'none' : 'warning'}
+                validationMessage={folderProblem}
+              >
+                <Input
+                  value={folder}
+                  onChange={(_, data) => {
+                    setFolder(data.value);
+                  }}
+                  placeholder="/Users/you/Documents/References"
+                />
+              </Field>
+              {health.data?.describeFigures === true ? (
+                <Field
+                  label="Index figures"
+                  hint="Find figures in PDFs so GRETTA can search them and look at them when answering. Costs almost nothing while indexing; each figure is rendered the first time it comes up. Needs a vision model. Changing this later rebuilds the collection."
+                >
+                  <Switch
+                    checked={indexFigures}
+                    label={indexFigures ? 'On' : 'Off'}
+                    disabled={busy}
+                    onChange={(_, data) => {
+                      setIndexFigures(data.checked);
+                    }}
+                  />
+                </Field>
+              ) : null}
+              <div className={styles.addRow}>
+                <FolderPickerButton onPicked={setFolder} disabled={busy} />
+                <Button
+                  appearance="primary"
+                  icon={<AddRegular />}
+                  disabled={busy || name.trim() === '' || folderProblem !== null}
+                  onClick={() => {
+                    void addCollection();
+                  }}
+                >
+                  Add collection
+                </Button>
+              </div>
+            </div>
+          </AccordionPanel>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 }

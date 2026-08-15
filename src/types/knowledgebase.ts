@@ -29,6 +29,16 @@ export interface ChunkLocator {
   paragraph: number | null;
 }
 
+/** A figure attached to a retrieved chunk (ADR-036). */
+export interface RetrievedFigure {
+  /** Stable id; fetch the pixels with `getFigure`. */
+  id: string;
+  /** The caption, as printed in the paper. */
+  caption: string;
+  /** True once the vision model has described it — retrieval is better then. */
+  described: boolean;
+}
+
 /** One retrieved chunk with the provenance needed to cite it. */
 export interface RetrievedChunk {
   /** Id of the collection this chunk was retrieved from. */
@@ -41,6 +51,28 @@ export interface RetrievedChunk {
   text: string;
   /** Cosine similarity to the query, 0..1. */
   score: number;
+  /**
+   * Present when this chunk is a figure's caption rather than prose.
+   *
+   * The pane fetches the pixels separately and only when it will use them, so
+   * a query response never carries image bytes for figures nobody looks at.
+   */
+  figure?: RetrievedFigure | undefined;
+}
+
+/** A figure's pixels and metadata (`GET /figures/:collectionId/:figureId`). */
+export interface FigureImage {
+  id: string;
+  source: string;
+  page: number;
+  caption: string;
+  /** The vision model's description, once it has been made. */
+  description: string | null;
+  mediaType: string;
+  /** Base64 PNG, no data-URI prefix — the shape Ollama's `images` field wants. */
+  dataBase64: string;
+  width: number;
+  height: number;
 }
 
 /** Lifecycle of a collection's index, surfaced in the KB panel + banner. */
@@ -75,6 +107,15 @@ export interface CollectionConfig {
   folders: string[];
   /** Per-collection embedding model; changing it forces a full re-index. */
   embeddingModel: string;
+  /**
+   * Detect figures in PDFs and make them retrievable (ADR-036).
+   *
+   * Per-collection rather than global because, like the embedding model, it
+   * changes what is *in* the collection. Off by default. Turning it on costs
+   * almost nothing at index time — only captions are recorded — and figures are
+   * rendered and described the first time something actually asks for one.
+   */
+  indexFigures: boolean;
 }
 
 /** A collection's live status = config + index state + capacity. */
@@ -98,6 +139,11 @@ export interface CollectionStatus {
    * rather than the companion silently degrading or dropping sources.
    */
   overCapacity: boolean;
+  /** Whether figure detection is on for this collection. */
+  indexFigures: boolean;
+  /** Figures found, and how many have been described so far. */
+  figureCount: number;
+  describedFigureCount: number;
   /** Files skipped (unsupported format / parse failure) with reasons. */
   skipped: { path: string; reason: string }[];
   /** ISO timestamp of the last completed index, or null. */
@@ -129,6 +175,14 @@ export interface KnowledgeBaseHealth {
    * Optional, and absent reads as false — an older companion has no dialog.
    */
   pickFolder?: boolean | undefined;
+  /**
+   * Whether this companion can render and describe figures (ADR-036).
+   *
+   * Advertised like `pickFolder`, and for the same reason: the pane decides
+   * whether to offer the switch before anyone touches it. Absent reads as
+   * false, so an older companion simply never offers figures.
+   */
+  describeFigures?: boolean | undefined;
 }
 
 /**

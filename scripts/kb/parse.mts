@@ -18,20 +18,32 @@ import { extname } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { MAX_SCAN_ITERATIONS, extractBraceArg } from './brace-scan.mts';
 import { blocksFromPlainText } from './blocks.mts';
+import { figureId, findFigures } from './figures.mts';
+import type { FigureAnchor } from './figures.mts';
 import { parseTexFile } from './tex/index.mts';
 import type { MacroTable } from './tex/index.mts';
 import type { SourceBlock } from './chunk.mts';
 
 export { blocksFromPlainText } from './blocks.mts';
 
+/** A figure found while parsing, with the geometry needed to render it later. */
+export interface FoundFigure {
+  id: string;
+  anchor: FigureAnchor;
+}
+
 /** Either the parsed blocks, or a reason the file was skipped (surfaced to UI). */
-export type ParseResult = { ok: true; blocks: SourceBlock[] } | { ok: false; reason: string };
+export type ParseResult =
+  { ok: true; blocks: SourceBlock[]; figures?: FoundFigure[] } | { ok: false; reason: string };
 
 /** Per-call context `parseFile` threads to format-specific parsers that need
- * more than just their own file. Only `.tex` uses this today (its folder
- * macro table); every other format ignores it. */
+ * more than just their own file. `.tex` uses the folder macro table; `.pdf`
+ * uses `contentHash`, whose presence is also what enables figure detection
+ * (ADR-036) — a collection with figures off simply does not pass it. */
 export interface ParseContext {
   texMacros?: MacroTable;
+  /** The file's content hash; enables figure detection and keys their ids. */
+  contentHash?: string | undefined;
 }
 
 /** Extensions the companion will attempt, in priority order. */
@@ -75,23 +87,50 @@ export function blocksFromPdfPage(
   }));
 }
 
-async function parsePdf(path: string): Promise<ParseResult> {
+async function parsePdf(path: string, context?: ParseContext): Promise<ParseResult> {
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(await readFile(path));
   const loadingTask = getDocument({ data, useSystemFonts: true });
   const doc = await loadingTask.promise;
   try {
     const blocks: SourceBlock[] = [];
+    const figures: FoundFigure[] = [];
     for (let page = 1; page <= doc.numPages; page += 1) {
-      const content = await (await doc.getPage(page)).getTextContent();
+      const proxy = await doc.getPage(page);
+      const content = await proxy.getTextContent();
       const items = content.items.flatMap((item) =>
         'str' in item ? [{ str: item.str, hasEOL: item.hasEOL }] : [],
       );
       blocks.push(...blocksFromPdfPage(items, page));
+
+      // Figures are opt-in per collection (ADR-036): the caption scan is cheap,
+      // but a collection that will never surface figures should not carry them.
+      if (context?.contentHash === undefined) continue;
+      const viewport = proxy.getViewport({ scale: 1 });
+      const positioned = content.items.flatMap((item) =>
+        'str' in item
+          ? [
+              {
+                str: item.str,
+                transform: item.transform as number[],
+                width: item.width,
+                height: item.height,
+              },
+            ]
+          : [],
+      );
+      for (const anchor of findFigures(positioned, page, viewport.width, viewport.height)) {
+        const id = figureId(context.contentHash, page, anchor.region);
+        figures.push({ id, anchor });
+        // The caption becomes its own atomic block, so it is retrievable now
+        // and can be enriched with a description later without disturbing the
+        // prose chunks around it.
+        blocks.push({ text: anchor.caption, page, paragraph: null, figureId: id });
+      }
     }
     return blocks.length === 0
       ? { ok: false, reason: 'no extractable text (scanned PDF? OCR is not performed)' }
-      : { ok: true, blocks };
+      : { ok: true, blocks, ...(figures.length === 0 ? {} : { figures }) };
   } finally {
     // destroy() lives on the loading task in pdf.js v6, not the document proxy.
     await loadingTask.destroy();
@@ -269,7 +308,7 @@ export async function parseFile(path: string, context?: ParseContext): Promise<P
           : { ok: true, blocks };
       }
       case '.pdf':
-        return await parsePdf(path);
+        return await parsePdf(path, context);
       case '.docx':
         return await parseDocx(path);
       case '.tex':

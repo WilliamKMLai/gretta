@@ -15,6 +15,7 @@ import {
   MessageBar,
   MessageBarBody,
   Select,
+  Switch,
   Textarea,
   makeStyles,
   tokens,
@@ -22,6 +23,7 @@ import {
 import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons';
 import type { CollectionConfig, CollectionStatus } from '../../../types/knowledgebase';
 import { FolderPickerButton } from './FolderPickerButton';
+import { useKbHealth } from '../../../hooks/useKbQueries';
 
 const useStyles = makeStyles({
   form: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
@@ -47,6 +49,10 @@ export function CollectionEditor({
   const [name, setName] = useState(collection.name);
   const [folders, setFolders] = useState(collection.folders.join('\n'));
   const [model, setModel] = useState(collection.embeddingModel);
+  const [indexFigures, setIndexFigures] = useState(collection.indexFigures);
+  // Offered only when the companion can actually render figures (ADR-036),
+  // the same capability gate FolderPickerButton uses.
+  const canDescribe = useKbHealth(true).data?.describeFigures === true;
 
   const parsedFolders = folders
     .split('\n')
@@ -54,6 +60,7 @@ export function CollectionEditor({
     .filter((folder) => folder !== '');
   const valid = name.trim() !== '' && parsedFolders.length > 0;
   const modelChanged = model !== collection.embeddingModel;
+  const figuresChanged = indexFigures !== collection.indexFigures;
 
   return (
     <div className={styles.form}>
@@ -115,6 +122,33 @@ export function CollectionEditor({
           </MessageBarBody>
         </MessageBar>
       ) : null}
+      {figuresChanged ? (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            Changing this re-indexes the collection from scratch — figure captions are stored as
+            their own excerpts, so turning it on or off changes which excerpts exist.
+          </MessageBarBody>
+        </MessageBar>
+      ) : null}
+      {canDescribe ? (
+        <Field
+          label="Index figures"
+          hint={
+            indexFigures
+              ? 'Figures in PDFs are found by their captions and can be looked at when answering. Each one is rendered and described the first time it comes up.'
+              : 'Find figures in PDFs so GRETTA can search them and look at them when answering. Needs a vision model.'
+          }
+        >
+          <Switch
+            checked={indexFigures}
+            label={indexFigures ? 'On' : 'Off'}
+            onChange={(_, data) => {
+              setIndexFigures(data.checked);
+            }}
+          />
+        </Field>
+      ) : null}
+
       <div className={styles.actions}>
         <Button size="small" icon={<DismissRegular />} onClick={onCancel}>
           Cancel
@@ -131,6 +165,7 @@ export function CollectionEditor({
               name: name.trim(),
               folders: parsedFolders,
               embeddingModel: model,
+              indexFigures,
             });
           }}
         >
