@@ -17,6 +17,12 @@ import { useSettingsStore } from '../../settings';
 import { KB_BINDING_KEY, useKnowledgeBaseStore } from '../knowledgebase.store';
 import { KnowledgeBasePanel } from './KnowledgeBasePanel';
 
+const toastSpies = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock('../../../components/toaster', () => ({
+  APP_TOASTER_ID: 'test-toaster',
+  useAppToasts: () => toastSpies,
+}));
+
 const collection: CollectionStatus = {
   id: 'refs',
   name: 'Reference library',
@@ -83,6 +89,9 @@ beforeEach(() => {
   setServices({ kb: stubKb(), office: new MockOfficeService({}), ollama: stubOllama() });
   useKnowledgeBaseStore.setState({ boundCollectionIds: [], bindingLoaded: false, progress: {} });
   useSettingsStore.setState({ kbEnabled: true, defaultEmbeddingModel: 'nomic-embed-text' });
+  toastSpies.error.mockClear();
+  toastSpies.info.mockClear();
+  toastSpies.success.mockClear();
 });
 
 describe('KnowledgeBasePanel', () => {
@@ -290,5 +299,80 @@ describe('KnowledgeBasePanel', () => {
     render(wrap(<KnowledgeBasePanel />));
     const checkbox = await screen.findByRole('checkbox', { name: /use in this document/i });
     expect(checkbox).toBeDisabled();
+  });
+
+  it('generates a non-empty fallback id when a collection name has no Latin characters', async () => {
+    const upsertCollection = vi.fn(() => Promise.resolve(collection));
+    setServices({
+      kb: stubKb({ listCollections: () => Promise.resolve([]), upsertCollection }),
+    });
+    render(wrap(<KnowledgeBasePanel />));
+
+    const nameInput = await screen.findByPlaceholderText('Reference library');
+    const folderInput = screen.getByPlaceholderText('/Users/you/Documents/References');
+    await userEvent.type(nameInput, '参考文献');
+    await userEvent.type(folderInput, '/Users/me/Refs');
+    await userEvent.click(screen.getByRole('button', { name: /add collection/i }));
+
+    await waitFor(() => {
+      expect(upsertCollection).toHaveBeenCalledTimes(1);
+    });
+    const submitted = (
+      upsertCollection.mock.calls[0] as unknown as [{ id: string; name: string }]
+    )[0];
+    expect(submitted.name).toBe('参考文献');
+    expect(submitted.id.length).toBeGreaterThan(0);
+  });
+
+  it('validates folder paths in CollectionEditor and blocks relative or ~ paths', async () => {
+    render(wrap(<KnowledgeBasePanel />));
+    await userEvent.click(await screen.findByRole('button', { name: /edit reference library/i }));
+
+    const foldersBox = await screen.findByDisplayValue('/Users/me/Refs');
+    await userEvent.clear(foldersBox);
+    await userEvent.type(foldersBox, '~/Refs');
+
+    expect(await screen.findByText(/expand ~ to your full home folder path/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+  });
+
+  it('toasts companion errors on add, save (keeping editor open), reindex, and delete', async () => {
+    const upsertCollection = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Folder does not exist'))
+      .mockRejectedValueOnce(new Error('Permission denied'));
+    const reindexCollection = vi.fn(() => Promise.reject(new Error('Companion busy')));
+    const deleteCollection = vi.fn(() => Promise.reject(new Error('SQLite locked')));
+    setServices({
+      kb: stubKb({ upsertCollection, reindexCollection, deleteCollection }),
+    });
+    render(wrap(<KnowledgeBasePanel />));
+
+    await userEvent.click(await screen.findByRole('button', { name: /add a collection/i }));
+    await userEvent.type(screen.getByPlaceholderText('Reference library'), 'New refs');
+    await userEvent.type(screen.getByPlaceholderText('/Users/you/Documents/References'), '/tmp/x');
+    await userEvent.click(screen.getByRole('button', { name: /add collection/i }));
+    await waitFor(() => {
+      expect(toastSpies.error).toHaveBeenCalledWith('Folder does not exist');
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /edit reference library/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => {
+      expect(toastSpies.error).toHaveBeenCalledWith('Permission denied');
+    });
+    expect(screen.getByDisplayValue('Reference library')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await userEvent.click(screen.getByRole('button', { name: /re-index reference library/i }));
+    await waitFor(() => {
+      expect(toastSpies.error).toHaveBeenCalledWith('Companion busy');
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /delete reference library/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /delete collection/i }));
+    await waitFor(() => {
+      expect(toastSpies.error).toHaveBeenCalledWith('SQLite locked');
+    });
   });
 });

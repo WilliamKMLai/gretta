@@ -73,7 +73,7 @@ export interface CollectionCardProps {
   onToggleBound: (bound: boolean) => void;
   onReindex: () => void;
   onDelete: () => void;
-  onSave: (config: CollectionConfig) => void;
+  onSave: (config: CollectionConfig) => Promise<boolean>;
 }
 
 export function CollectionCard({
@@ -140,8 +140,9 @@ export function CollectionCard({
             setEditing(false);
           }}
           onSave={(config) => {
-            setEditing(false);
-            onSave(config);
+            void onSave(config).then((saved) => {
+              if (saved) setEditing(false);
+            });
           }}
         />
       ) : (

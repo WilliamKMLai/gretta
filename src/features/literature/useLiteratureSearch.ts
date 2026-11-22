@@ -51,9 +51,7 @@ export interface UseLiteratureSearch {
 }
 
 export function useLiteratureSearch(): UseLiteratureSearch {
-  const settings = useSettingsStore();
-  const store = useLiteratureStore();
-  const { setPassage, setDraft, setFromYear, setPhase, setError, setResults } = store;
+  const phase = useLiteratureStore((state) => state.phase);
 
   /**
    * Cancels the run in flight. Phase only — the results, passage and draft
@@ -62,8 +60,8 @@ export function useLiteratureSearch(): UseLiteratureSearch {
    */
   const cancel = useCallback((): void => {
     abortRun();
-    setPhase('idle');
-  }, [setPhase]);
+    useLiteratureStore.getState().setPhase('idle');
+  }, []);
 
   /**
    * Steps 1 and 2. Nothing here touches the network — but the local generation
@@ -71,6 +69,8 @@ export function useLiteratureSearch(): UseLiteratureSearch {
    */
   const captureAndDraft = useCallback(async (): Promise<void> => {
     const { office, ollama } = getServices();
+    const settings = useSettingsStore.getState();
+    const { setPassage, setDraft, setPhase, setError } = useLiteratureStore.getState();
     const controller = beginRun();
     setPhase('drafting');
     setError(null);
@@ -133,18 +133,20 @@ export function useLiteratureSearch(): UseLiteratureSearch {
     } finally {
       endRun(controller);
     }
-  }, [settings, setPassage, setDraft, setPhase, setError]);
+  }, []);
 
   /** Steps 4 and 5. The first and only outbound traffic. */
   const search = useCallback(async (): Promise<void> => {
-    const approval = approveQuery(useLiteratureStore.getState().draft);
+    const { draft, passage, fromYear, setPhase, setError, setResults } =
+      useLiteratureStore.getState();
+    const approval = approveQuery(draft);
     if (!approval.ok) {
       setError(approval.message);
       return;
     }
 
+    const settings = useSettingsStore.getState();
     const { ollama } = getServices();
-    const { passage, fromYear } = useLiteratureStore.getState();
     setPhase('searching');
     setError(null);
 
@@ -324,46 +326,45 @@ export function useLiteratureSearch(): UseLiteratureSearch {
     } finally {
       endRun(controller);
     }
-  }, [settings, setPhase, setError, setResults]);
+  }, []);
 
-  const reuseSearch = useCallback(
-    async (entry: CacheEntry): Promise<void> => {
-      const { ollama } = getServices();
-      setDraft(entry.query);
-      setFromYear(entry.fromYear);
-      setPhase('searching');
-      setError(null);
+  const reuseSearch = useCallback(async (entry: CacheEntry): Promise<void> => {
+    const { ollama } = getServices();
+    const settings = useSettingsStore.getState();
+    const { setDraft, setFromYear, setPhase, setError, setResults } = useLiteratureStore.getState();
+    setDraft(entry.query);
+    setFromYear(entry.fromYear);
+    setPhase('searching');
+    setError(null);
 
-      // Cancellable for the same reason as `search`: a stored entry whose
-      // passage has changed re-ranks, which embeds, which is a real wait.
-      const controller = beginRun();
-      try {
-        const { passage } = useLiteratureStore.getState();
-        await resolveCacheHit(
-          entry.key,
-          entry,
-          passage,
-          ollama,
-          settings,
-          controller,
-          onlyIfCurrent(controller, setResults),
-        );
-      } catch (error) {
-        if (wasAborted(error, controller)) return;
-        setError(error instanceof Error ? error.message : 'The search could not be completed.');
-      } finally {
-        endRun(controller);
-      }
-    },
-    [settings, setDraft, setFromYear, setPhase, setError, setResults],
-  );
+    // Cancellable for the same reason as `search`: a stored entry whose
+    // passage has changed re-ranks, which embeds, which is a real wait.
+    const controller = beginRun();
+    try {
+      const { passage } = useLiteratureStore.getState();
+      await resolveCacheHit(
+        entry.key,
+        entry,
+        passage,
+        ollama,
+        settings,
+        controller,
+        onlyIfCurrent(controller, setResults),
+      );
+    } catch (error) {
+      if (wasAborted(error, controller)) return;
+      setError(error instanceof Error ? error.message : 'The search could not be completed.');
+    } finally {
+      endRun(controller);
+    }
+  }, []);
 
   return {
     captureAndDraft,
     search,
     reuseSearch,
     cancel,
-    busy: store.phase === 'drafting' || store.phase === 'searching',
+    busy: phase === 'drafting' || phase === 'searching',
   };
 }
 

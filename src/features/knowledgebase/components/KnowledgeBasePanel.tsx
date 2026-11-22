@@ -37,8 +37,10 @@ import {
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons';
 import { getServices } from '../../../app/services';
 import { EmptyState } from '../../../components/EmptyState';
+import { useAppToasts } from '../../../components/toaster';
 import { useKbCollections, useKbHealth } from '../../../hooks/useKbQueries';
 import { useModels } from '../../../hooks/useOllamaQueries';
+import { newId } from '../../../utils/id';
 import { describeFolderProblem, filterEmbeddingModels } from '../embeddingModels';
 import { useSettingsStore } from '../../settings';
 import { useDocumentBinding } from '../useDocumentBinding';
@@ -55,17 +57,23 @@ const useStyles = makeStyles({
   muted: { color: tokens.colorNeutralForeground3 },
 });
 
-/** Turns a collection name into a stable id, since the user only types a name. */
+/** Turns a collection name into a stable id, falling back to a unique id for non-Latin names. */
 function toId(name: string): string {
-  return name
+  const slug = name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, '-')
     .replace(/^-|-$/gu, '');
+  return slug === '' ? newId() : slug;
+}
+
+function describeFailure(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message !== '' ? error.message : fallback;
 }
 
 export function KnowledgeBasePanel(): ReactElement {
   const styles = useStyles();
+  const toasts = useAppToasts();
   const kbEnabled = useSettingsStore((state) => state.kbEnabled);
   const defaultModel = useSettingsStore((state) => state.defaultEmbeddingModel);
   const setSettings = useSettingsStore((state) => state.setSettings);
@@ -126,6 +134,8 @@ export function KnowledgeBasePanel(): ReactElement {
       setFolder('');
       setIndexFigures(false);
       refresh();
+    } catch (error) {
+      toasts.error(describeFailure(error, 'Could not add the collection.'));
     } finally {
       setBusy(false);
     }
@@ -248,14 +258,32 @@ export function KnowledgeBasePanel(): ReactElement {
             onToggleBound={(bound) => {
               void toggleCollection(collection.id, bound);
             }}
-            onSave={(config) => {
-              void getServices().kb.upsertCollection(config).then(refresh, refresh);
+            onSave={async (config) => {
+              try {
+                await getServices().kb.upsertCollection(config);
+                refresh();
+                return true;
+              } catch (error) {
+                toasts.error(describeFailure(error, 'Could not save collection changes.'));
+                refresh();
+                return false;
+              }
             }}
             onReindex={() => {
-              void getServices().kb.reindexCollection(collection.id, false).then(refresh, refresh);
+              void getServices()
+                .kb.reindexCollection(collection.id, false)
+                .then(refresh, (error: unknown) => {
+                  toasts.error(describeFailure(error, 'Could not start re-indexing.'));
+                  refresh();
+                });
             }}
             onDelete={() => {
-              void getServices().kb.deleteCollection(collection.id).then(refresh, refresh);
+              void getServices()
+                .kb.deleteCollection(collection.id)
+                .then(refresh, (error: unknown) => {
+                  toasts.error(describeFailure(error, 'Could not delete the collection.'));
+                  refresh();
+                });
             }}
           />
         ))}

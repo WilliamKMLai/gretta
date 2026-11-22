@@ -28,12 +28,19 @@ import {
   MoreHorizontalRegular,
 } from '@fluentui/react-icons';
 import { useAppToasts } from '../../../components/toaster';
-import type { GenerationRecord } from '../../../types/domain';
+import type { AppliedAction, GenerationRecord } from '../../../types/domain';
 import { downloadTextFile } from '../../../utils/download';
 import { formatRelativeTime } from '../../../utils/time';
 import { exportFilename, recordToJson, recordToMarkdown } from '../export';
 import { describeRecord, useHistoryStore } from '../history.store';
 import { isTruncated } from '../contextExcerpt';
+
+const APPLIED_LABELS: Record<AppliedAction['kind'], string> = {
+  insert: 'inserted',
+  replace: 'replaced',
+  append: 'appended',
+  comment: 'commented',
+};
 
 const useStyles = makeStyles({
   list: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS },
@@ -149,7 +156,7 @@ export function HistoryList({ onOpen }: HistoryListProps): ReactElement {
               )}
               {record.applied === undefined ? null : (
                 <Badge appearance="tint" color="success" size="small">
-                  {record.applied.kind}ed
+                  {APPLIED_LABELS[record.applied.kind]}
                 </Badge>
               )}
             </span>

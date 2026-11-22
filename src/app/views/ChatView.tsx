@@ -25,6 +25,7 @@ import {
   GenerationControls,
   ImageAttachButton,
   ResponseView,
+  abortActiveGeneration,
   useAttachmentsStore,
   useGeneration,
   useImageAttach,
@@ -39,6 +40,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import type { HostInfo } from '../../services/office';
 import type { ContextSource, PromptContextVar } from '../../types/domain';
 import { usePaneLayout } from '../../hooks/usePaneLayout';
+import { markdownToPlainText } from '../../utils/markdown';
 import { formatRelativeTime } from '../../utils/time';
 import { useUiStore } from '../ui.store';
 
@@ -125,7 +127,9 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
 
   /** Clears the pane back to a blank prompt without touching saved history. */
   const startNewPrompt = (): void => {
+    abortActiveGeneration();
     useStreamStore.getState().reset();
+    useAttachmentsStore.getState().clear();
     useHistoryStore.getState().setActiveRecord(null);
     setDraft('');
   };
@@ -289,7 +293,11 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
             void actions.copy(streamText);
           },
           onInsert: () => {
-            void actions.insertAtCursor(streamText);
+            void actions.insertAtCursor(markdownToPlainText(streamText)).then((ok) => {
+              if (ok && activeRecord !== null) {
+                useHistoryStore.getState().markApplied(activeRecord.id, 'insert');
+              }
+            });
           },
         }),
   });

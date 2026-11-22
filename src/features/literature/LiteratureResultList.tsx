@@ -28,7 +28,7 @@ import {
 import { verificationStatus } from '../../services/literature';
 import type { AssessedRecord } from '../../types/literature';
 import { useSettingsStore } from '../settings';
-import { useLiteratureStore } from './literature.store';
+import { useLiteratureStore, type RankingMode } from './literature.store';
 import { ResultCard } from './LiteratureResultCard';
 
 const useStyles = makeStyles({
@@ -50,16 +50,25 @@ const useStyles = makeStyles({
   },
 });
 
-// The citation-impact nudge (DECISIONS.md ADR-029's amendment) applies to
-// both ranking modes, so both labels say so — truthfully even when it turns
-// out to be a no-op, since "when available" covers OpenAlex being off.
-const RANKING_LABEL = {
-  semantic:
-    'Ranked against your selection, on this machine, with a small nudge toward higher citation impact for its year (OpenAlex, when available).',
-  lexical:
-    'Ranked by shared words rather than meaning, with a small nudge toward higher citation impact for its year (OpenAlex, when available).',
-  'source-order': "Shown in the source's own order; not ranked against your selection.",
-} as const;
+// Citation weighting (DECISIONS.md ADR-029, fifth amendment) uses log-scaled
+// raw citation counts from OpenAlex when `litCitationImpactWeight > 0`, and
+// drops out completely when the weight is set to 0.
+const RANKING_LABEL: Record<RankingMode, { base: string; weighted: string }> = {
+  semantic: {
+    base: 'Ranked against your selection, on this machine.',
+    weighted:
+      'Ranked against your selection, on this machine, weighted by log-scaled citation count (OpenAlex, when available).',
+  },
+  lexical: {
+    base: 'Ranked by shared words rather than meaning.',
+    weighted:
+      'Ranked by shared words rather than meaning, weighted by log-scaled citation count (OpenAlex, when available).',
+  },
+  'source-order': {
+    base: "Shown in the source's own order; not ranked against your selection.",
+    weighted: "Shown in the source's own order; not ranked against your selection.",
+  },
+};
 
 /**
  * Which checks ran for *none* of the current results — a property of what's
@@ -112,15 +121,21 @@ function describeSkippedChecks(results: readonly AssessedRecord[]): {
 export function LiteratureResultList(): ReactElement | null {
   const styles = useStyles();
   const [showLimited, setShowLimited] = useState(false);
-  const { results, ranking, rankingNote, sentQueries } = useLiteratureStore();
+  const results = useLiteratureStore((state) => state.results);
+  const ranking = useLiteratureStore((state) => state.ranking);
+  const rankingNote = useLiteratureStore((state) => state.rankingNote);
+  const sentQueries = useLiteratureStore((state) => state.sentQueries);
   const [showSent, setShowSent] = useState(false);
   const minVenueCitedness = useSettingsStore((state) => state.litMinVenueCitedness);
+  const citationImpactWeight = useSettingsStore((state) => state.litCitationImpactWeight);
 
   if (results.length === 0) return null;
 
   const verified = results.filter((entry) => verificationStatus(entry.signals) !== 'limited');
   const limited = results.filter((entry) => verificationStatus(entry.signals) === 'limited');
   const { note: skippedChecksNote, suppressedUncheckedIds } = describeSkippedChecks(results);
+  const rankingText =
+    citationImpactWeight > 0 ? RANKING_LABEL[ranking].weighted : RANKING_LABEL[ranking].base;
 
   return (
     <div className={styles.list}>
@@ -128,7 +143,7 @@ export function LiteratureResultList(): ReactElement | null {
         <Caption1 className={styles.ranking}>{skippedChecksNote}</Caption1>
       )}
 
-      <Caption1 className={styles.ranking}>{RANKING_LABEL[ranking]}</Caption1>
+      <Caption1 className={styles.ranking}>{rankingText}</Caption1>
 
       {sentQueries.length === 0 ? null : (
         <>

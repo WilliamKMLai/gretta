@@ -112,6 +112,7 @@ export function ResponseView({ onRetry, compact = false }: ResponseViewProps = {
   const text = useStreamStore((state) => state.text);
   const stats = useStreamStore((state) => state.stats);
   const error = useStreamStore((state) => state.error);
+  const request = useStreamStore((state) => state.request);
   const sources = useStreamStore((state) => state.sources);
   const budget = useStreamStore((state) => state.budget);
   const budgetNote = budget === null ? null : describeBudget(budget);
@@ -122,11 +123,21 @@ export function ResponseView({ onRetry, compact = false }: ResponseViewProps = {
   textRef.current = text;
 
   useEffect(() => {
+    stickRef.current = true;
+  }, [request]);
+
+  useEffect(() => {
+    if (status === 'idle' || status === 'connecting') {
+      stickRef.current = true;
+    }
+  }, [status]);
+
+  useEffect(() => {
     const el = scrollRef.current;
     if (el !== null && stickRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [text]);
+  }, [text, request]);
 
   const [announcement, setAnnouncement] = useState('');
   useEffect(() => {

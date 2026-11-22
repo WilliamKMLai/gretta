@@ -9,11 +9,11 @@ import { getServices } from '../../app/services';
 import { WORD_API_COMMENTS } from '../../services/office';
 
 export interface DocumentActions {
-  copy: (text: string) => Promise<void>;
-  replaceSelection: (text: string) => Promise<void>;
-  insertAtCursor: (text: string) => Promise<void>;
-  appendText: (text: string) => Promise<void>;
-  comment: (text: string) => Promise<void>;
+  copy: (text: string) => Promise<boolean>;
+  replaceSelection: (text: string) => Promise<boolean>;
+  insertAtCursor: (text: string) => Promise<boolean>;
+  appendText: (text: string) => Promise<boolean>;
+  comment: (text: string) => Promise<boolean>;
   /** Runtime WordApi 1.4 gate for the Comment action. */
   commentsSupported: boolean;
 }
@@ -22,12 +22,14 @@ export function useDocumentActions(): DocumentActions {
   const toasts = useAppToasts();
 
   return useMemo(() => {
-    const attempt = async (success: string, run: () => Promise<void>): Promise<void> => {
+    const attempt = async (success: string, run: () => Promise<void>): Promise<boolean> => {
       try {
         await run();
         toasts.success(success);
+        return true;
       } catch (error) {
         toasts.error(error instanceof Error ? error.message : 'The action failed — try again.');
+        return false;
       }
     };
 

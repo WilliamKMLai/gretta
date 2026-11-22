@@ -367,3 +367,23 @@ describe('useLiteratureSearch().cancel', () => {
     expect(await listEntries()).toEqual([]);
   });
 });
+
+describe('useLiteratureSearch subscription granularity', () => {
+  it('does not re-render or recreate callbacks on draft edits', () => {
+    let renders = 0;
+    const { result } = renderHook(() => {
+      renders += 1;
+      return useLiteratureSearch();
+    });
+    const firstSearch = result.current.search;
+    const firstReuse = result.current.reuseSearch;
+
+    act(() => {
+      useLiteratureStore.getState().setDraft('typing a query');
+    });
+
+    expect(renders).toBe(1);
+    expect(result.current.search).toBe(firstSearch);
+    expect(result.current.reuseSearch).toBe(firstReuse);
+  });
+});

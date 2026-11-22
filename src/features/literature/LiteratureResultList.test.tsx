@@ -5,10 +5,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement, ReactNode } from 'react';
 import type { AssessedRecord, CredibilitySignals } from '../../types/literature';
+import { useSettingsStore } from '../settings';
 import { LiteratureResultList } from './LiteratureResultList';
 import { useLiteratureStore } from './literature.store';
 
 const initial = useLiteratureStore.getState();
+const initialSettings = useSettingsStore.getState();
 
 function wrap(children: ReactNode): ReactElement {
   return <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
@@ -66,6 +68,7 @@ const withCitations: CredibilitySignals = {
 
 beforeEach(() => {
   useLiteratureStore.setState(initial, true);
+  useSettingsStore.setState(initialSettings, true);
 });
 
 describe('LiteratureResultList citation numbers', () => {
@@ -180,5 +183,28 @@ describe('LiteratureResultList citation count', () => {
     // A single match proves it isn't also duplicated in the generic badge
     // row — getByText throws on more than one match.
     expect(screen.getByText('1,234 citations')).toBeInTheDocument();
+  });
+});
+
+describe('LiteratureResultList ranking label', () => {
+  it('reflects log-scaled citation weighting when enabled and omits it when set to 0', () => {
+    useLiteratureStore.setState({
+      results: [entry('a', withCitations)],
+      ranking: 'semantic',
+      hiddenCount: 0,
+      rankingNote: null,
+      sentQueries: [],
+    });
+
+    const view = render(wrap(<LiteratureResultList />));
+    expect(
+      screen.getByText(/weighted by log-scaled citation count \(OpenAlex, when available\)/),
+    ).toBeInTheDocument();
+    view.unmount();
+
+    useSettingsStore.setState({ litCitationImpactWeight: 0 });
+    render(wrap(<LiteratureResultList />));
+    expect(screen.getByText('Ranked against your selection, on this machine.')).toBeInTheDocument();
+    expect(screen.queryByText(/log-scaled citation count/)).not.toBeInTheDocument();
   });
 });

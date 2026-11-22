@@ -22,6 +22,7 @@ import {
 } from '@fluentui/react-components';
 import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons';
 import type { CollectionConfig, CollectionStatus } from '../../../types/knowledgebase';
+import { describeFolderProblem } from '../embeddingModels';
 import { FolderPickerButton } from './FolderPickerButton';
 import { useKbHealth } from '../../../hooks/useKbQueries';
 
@@ -58,7 +59,11 @@ export function CollectionEditor({
     .split('\n')
     .map((folder) => folder.trim())
     .filter((folder) => folder !== '');
-  const valid = name.trim() !== '' && parsedFolders.length > 0;
+  const folderProblem =
+    parsedFolders.length === 0
+      ? describeFolderProblem('')
+      : (parsedFolders.map(describeFolderProblem).find((problem) => problem !== null) ?? null);
+  const valid = name.trim() !== '' && folderProblem === null;
   const modelChanged = model !== collection.embeddingModel;
   const figuresChanged = indexFigures !== collection.indexFigures;
 
@@ -72,7 +77,13 @@ export function CollectionEditor({
           }}
         />
       </Field>
-      <Field label="Folders" required hint="One absolute path per line.">
+      <Field
+        label="Folders"
+        required
+        hint="One absolute path per line."
+        validationState={folderProblem === null ? 'none' : 'warning'}
+        validationMessage={folderProblem}
+      >
         <Textarea
           value={folders}
           rows={2}

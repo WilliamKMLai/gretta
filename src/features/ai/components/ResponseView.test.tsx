@@ -1,5 +1,5 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { GenerationStats } from '../../../types/domain';
 import { OllamaError } from '../../../types/errors';
 import { useStreamStore } from '../stream.store';
@@ -65,5 +65,26 @@ describe('ResponseView', () => {
     expect(screen.getByText('Generation failed')).toBeInTheDocument();
     expect(screen.getByText('Ollama took too long.')).toBeInTheDocument();
     expect(screen.getByText('half a thought')).toBeInTheDocument();
+  });
+
+  it('re-pins auto-scroll when a new generation starts after scrolling up', () => {
+    useStreamStore.getState().start({ model: 'm', promptId: null });
+    useStreamStore.getState().appendToken('first run');
+    renderView();
+
+    const textEl = screen.getByText('first run');
+    const scroller = textEl.parentElement as HTMLDivElement;
+    Object.defineProperty(scroller, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(scroller, 'clientHeight', { value: 100, configurable: true });
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+
+    act(() => {
+      useStreamStore.getState().complete(stats);
+      useStreamStore.getState().start({ model: 'm', promptId: null });
+      useStreamStore.getState().appendToken('second run');
+    });
+
+    expect(scroller.scrollTop).toBe(500);
   });
 });

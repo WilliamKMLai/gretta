@@ -1,11 +1,16 @@
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { getServices, initServices, setServices } from '../../../app/services';
 import type { HostInfo } from '../../../services/office';
+import { useHistoryStore } from '../../history';
 import { ResultActionsBar } from './ResultActionsBar';
 
 const BROWSER_HOST: HostInfo = { available: false, host: 'unknown', platform: 'unknown' };
+
+beforeEach(() => {
+  useHistoryStore.setState({ records: [], activeRecordId: null });
+});
 
 afterEach(() => {
   initServices(BROWSER_HOST);
@@ -58,6 +63,43 @@ describe('ResultActionsBar', () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
     click.mockRestore();
+  });
+
+  it('marks a record applied only when the Office action succeeds', async () => {
+    const user = userEvent.setup();
+    const id = useHistoryStore.getState().addRecord({
+      prompt: 'tidy',
+      response: '**Clean** prose',
+      model: 'llama3',
+      outcome: 'completed',
+    });
+    const record = useHistoryStore.getState().records[0] ?? null;
+    const replaceSelection = vi
+      .spyOn(getServices().office, 'replaceSelection')
+      .mockRejectedValueOnce(new Error('Word busy'))
+      .mockResolvedValueOnce(undefined);
+
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <ResultActionsBar
+          text="**Clean** prose"
+          record={record}
+          onRefine={() => undefined}
+          refineDisabled
+        />
+      </FluentProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    expect(replaceSelection).toHaveBeenCalledWith('Clean prose');
+    expect(useHistoryStore.getState().records.find((r) => r.id === id)?.applied).toBeUndefined();
+
+    await user.click(screen.getByRole('button', { name: 'Replace' }));
+    await waitFor(() => {
+      expect(useHistoryStore.getState().records.find((r) => r.id === id)?.applied?.kind).toBe(
+        'replace',
+      );
+    });
   });
 });
 

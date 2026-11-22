@@ -43,7 +43,7 @@ function renderCard(collection: CollectionStatus): void {
         onToggleBound={vi.fn()}
         onReindex={vi.fn()}
         onDelete={vi.fn()}
-        onSave={vi.fn()}
+        onSave={vi.fn(() => Promise.resolve(true))}
       />,
     ),
   );
