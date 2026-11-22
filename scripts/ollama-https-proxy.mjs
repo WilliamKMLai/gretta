@@ -22,9 +22,11 @@
  * Then set the GRETTA Ollama URL to https://localhost:11435 on the Mac.
  *
  * Environment overrides:
- *   GRETTA_PROXY_PORT   listen port            (default 11435)
- *   GRETTA_OLLAMA_URL   upstream Ollama URL    (default http://127.0.0.1:11434)
- *   GRETTA_CERT_DIR     certificate directory  (default ~/.office-addin-dev-certs)
+ *   GRETTA_PROXY_HOST     listen address         (default 127.0.0.1)
+ *   GRETTA_PROXY_PORT     listen port            (default 11435)
+ *   GRETTA_OLLAMA_URL     upstream Ollama URL    (default http://127.0.0.1:11434)
+ *   GRETTA_PROXY_ORIGINS  extra allowed origins  (comma-separated, optional)
+ *   GRETTA_CERT_DIR       certificate directory  (default ~/.office-addin-dev-certs)
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -33,9 +35,43 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
+const HOST = process.env.GRETTA_PROXY_HOST ?? '127.0.0.1';
 const PORT = Number(process.env.GRETTA_PROXY_PORT ?? 11435);
 const TARGET = new URL(process.env.GRETTA_OLLAMA_URL ?? 'http://127.0.0.1:11434');
 const CERT_DIR = process.env.GRETTA_CERT_DIR ?? join(homedir(), '.office-addin-dev-certs');
+const EXTRA_ORIGINS = new Set(
+  (process.env.GRETTA_PROXY_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin !== ''),
+);
+
+/** Loopback origins (`localhost`, `127.0.0.1`, `[::1]`) on http or https, with optional port. */
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/u;
+
+function isAllowedOrigin(origin) {
+  if (typeof origin !== 'string') return false;
+  return LOOPBACK_ORIGIN.test(origin) || EXTRA_ORIGINS.has(origin);
+}
+
+/**
+ * Loopback CORS headers for proxy-generated responses (OPTIONS preflights and
+ * 502 upstream-unreachable errors). Without these on a 502, the browser hides
+ * the response as a CORS TypeError while the no-cors reachability probe still
+ * answers — misdiagnosing a stopped Ollama daemon as an OLLAMA_ORIGINS block.
+ */
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+  const headers = {
+    'access-control-allow-methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+    'access-control-allow-headers': 'Content-Type',
+  };
+  if (isAllowedOrigin(origin)) {
+    headers['access-control-allow-origin'] = origin;
+    headers.vary = 'Origin';
+  }
+  return headers;
+}
 
 const certPath = join(CERT_DIR, 'localhost.crt');
 const keyPath = join(CERT_DIR, 'localhost.key');
@@ -78,6 +114,12 @@ const targetPort =
   TARGET.port !== '' ? Number(TARGET.port) : TARGET.protocol === 'https:' ? 443 : 80;
 
 const server = createServer(tlsOptions, (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders(req));
+    res.end();
+    return;
+  }
+
   const upstream = upstreamRequest(
     {
       hostname: TARGET.hostname,
@@ -101,9 +143,11 @@ const server = createServer(tlsOptions, (req, res) => {
     console.error(
       `[gretta-proxy] ${req.method ?? '?'} ${req.url ?? '?'} → upstream error: ${code}`,
     );
-    if (!res.headersSent) {
-      res.writeHead(502, { 'content-type': 'application/json' });
+    if (res.headersSent) {
+      res.destroy(error);
+      return;
     }
+    res.writeHead(502, { ...corsHeaders(req), 'content-type': 'application/json' });
     res.end(
       JSON.stringify({
         error: `gretta-proxy: Ollama at ${TARGET.origin} is unreachable (${code}). Is "ollama serve" running?`,
@@ -147,8 +191,8 @@ server.on('connection', (socket) => {
   socket.setTimeout(0);
 });
 
-server.listen(PORT, () => {
-  console.log(`[gretta-proxy] https://localhost:${String(PORT)}  →  ${TARGET.origin}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[gretta-proxy] https://localhost:${String(PORT)} (${HOST})  →  ${TARGET.origin}`);
   console.log('[gretta-proxy] Set the GRETTA Ollama URL to the https address above.');
   console.log('[gretta-proxy] Press Ctrl+C to stop.');
 });
