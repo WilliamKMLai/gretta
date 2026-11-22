@@ -58,7 +58,7 @@ describe('migrate', () => {
 
     const applied = migrate(db);
 
-    expect(applied).toEqual([1]);
+    expect(applied).toEqual([1, 2]);
     expect(schemaVersion(db)).toBe(TARGET_VERSION);
     const rows = db.prepare('SELECT text, figureId FROM chunks').all() as {
       text: string;
@@ -67,13 +67,26 @@ describe('migrate', () => {
     expect(rows).toEqual([{ text: 'existing text', figureId: null }]);
   });
 
-  it('adds figureId and the figures table', () => {
+  it('adds figureId, the figures table, and the partial chunks_by_figure index', () => {
     const db = legacyDb();
     migrate(db);
     expect(columns(db, 'chunks')).toContain('figureId');
     expect(columns(db, 'figures')).toEqual(
       expect.arrayContaining(['id', 'collectionId', 'source', 'contentHash', 'page', 'caption']),
     );
+    const indexes = (db.pragma('index_list(chunks)') as { name: string }[]).map((i) => i.name);
+    expect(indexes).toContain('chunks_by_figure');
+  });
+
+  it('upgrades a v1 database incrementally with only step 2', () => {
+    const db = legacyDb();
+    db.exec('ALTER TABLE chunks ADD COLUMN figureId TEXT;');
+    db.pragma('user_version = 1');
+
+    expect(migrate(db)).toEqual([2]);
+    expect(schemaVersion(db)).toBe(TARGET_VERSION);
+    const indexes = (db.pragma('index_list(chunks)') as { name: string }[]).map((i) => i.name);
+    expect(indexes).toContain('chunks_by_figure');
   });
 
   it('is a no-op the second time', () => {

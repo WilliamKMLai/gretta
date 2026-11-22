@@ -130,6 +130,21 @@ describe('stripHtml', () => {
     expect(stripHtml('Fish &amp; chips &#65; &#x42;&nbsp;end')).toBe('Fish & chips A B end');
   });
 
+  it('replaces out-of-range, zero, and surrogate numeric entities without throwing', () => {
+    const raw = 'Bad &#9999999; &#x110000; &#0; &#xD800; ok';
+    expect(() => stripHtml(raw)).not.toThrow();
+    expect(stripHtml(raw)).toBe('Bad \uFFFD \uFFFD \uFFFD \uFFFD ok');
+  });
+
+  it('keeps HTML table cells separated and breaks on section/article/pre/hr tags', () => {
+    const html =
+      '<article><table><tr><th>Buffer</th><th>Temp</th></tr>' +
+      '<tr><td>Vantrellium</td><td>47.3C</td></tr></table>' +
+      '<hr/><section>Next</section></article>';
+    const blocks = blocksFromPlainText(stripHtml(html));
+    expect(blocks.map((b) => b.text)).toEqual(['Buffer Temp', 'Vantrellium 47.3C', 'Next']);
+  });
+
   it('leaves unclosed tags as harmless noise instead of throwing', () => {
     expect(() => stripHtml('<p>Unclosed <b>bold text')).not.toThrow();
     expect(stripHtml('<p>Unclosed <b>bold text')).toContain('bold text');

@@ -9,12 +9,15 @@
  * is configured and reachable.
  */
 
+/** Per-call ceiling so a wedged Ollama daemon fails into `ollama-unreachable`. */
+export const OLLAMA_EMBED_TIMEOUT_MS = 120_000;
+
 /** Turns text into vectors. One method so the store never assumes a provider. */
 export interface Embedder {
   /** The model tag; stored in the index header to detect model changes. */
   readonly model: string;
   /** Embeds a batch; the result is parallel to `texts`. */
-  embed(texts: string[]): Promise<number[][]>;
+  embed(texts: string[], signal?: AbortSignal): Promise<number[][]>;
 }
 
 /** Thrown when the embedding backend is unreachable (maps to `ollama-unreachable`). */
@@ -36,22 +39,31 @@ interface EmbedResponse {
 export class OllamaEmbedder implements Embedder {
   readonly model: string;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
 
-  constructor(model: string, baseUrl: string) {
+  constructor(model: string, baseUrl: string, timeoutMs = OLLAMA_EMBED_TIMEOUT_MS) {
     this.model = model;
     this.baseUrl = baseUrl;
+    this.timeoutMs = timeoutMs;
   }
 
-  async embed(texts: string[]): Promise<number[][]> {
+  async embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
     if (texts.length === 0) return [];
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const requestSignal =
+      signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/api/embed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: this.model, input: texts }),
+        signal: requestSignal,
       });
     } catch (cause) {
+      if (signal?.aborted === true) {
+        throw cause instanceof Error ? cause : new Error('Aborted');
+      }
       throw new EmbedUnreachableError(
         `Ollama embeddings unreachable at ${this.baseUrl}. Is "ollama serve" running?`,
         cause,

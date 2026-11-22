@@ -65,6 +65,16 @@ const STEPS: readonly ((db: Database) => void)[] = [
       CREATE INDEX IF NOT EXISTS figures_by_source ON figures (collectionId, source);
     `);
   },
+  /**
+   * v1 → v2: partial index on `chunks(figureId)` so `updateChunkForFigure`
+   * updates a figure's chunk directly instead of full-scanning `chunks`.
+   */
+  (db) => {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS chunks_by_figure
+      ON chunks (figureId) WHERE figureId IS NOT NULL;
+    `);
+  },
 ];
 
 /** Schema version this build expects. */

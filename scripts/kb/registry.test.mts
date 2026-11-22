@@ -263,3 +263,50 @@ describe('CollectionRegistry.query — embedding dedupe', () => {
     expect(query.mock.calls[0]?.[1]).toBe(DEFAULTS.topK);
   });
 });
+
+describe('CollectionRegistry lifecycle cancellation', () => {
+  it('cancels the indexer on delete() and closeAll()', () => {
+    const rows = [collectionRow('a', 'nomic-embed-text'), collectionRow('b', 'nomic-embed-text')];
+    const registry = new CollectionRegistry(
+      asStore(createFakeStore(rows)),
+      DEFAULTS,
+      'http://x',
+      false,
+    );
+    const indexerA = registry.get('a');
+    const indexerB = registry.get('b');
+    if (indexerA === null || indexerB === null) throw new Error('missing indexers');
+    const cancelA = vi.spyOn(indexerA, 'cancel');
+    const cancelB = vi.spyOn(indexerB, 'cancel');
+
+    expect(registry.delete('a')).toBe(true);
+    expect(cancelA).toHaveBeenCalledTimes(1);
+    expect(cancelB).not.toHaveBeenCalled();
+
+    registry.closeAll();
+    expect(cancelB).toHaveBeenCalledTimes(1);
+  });
+
+  it('arms watchers from in-memory indexer.folders without querying store counts', () => {
+    const store = createFakeStore([
+      {
+        id: 'a',
+        name: 'A',
+        folders: ['/definitely-missing-watch-path-for-test'],
+        embeddingModel: 'nomic-embed-text',
+        indexFigures: false,
+        lastIndexedAt: null,
+      },
+    ]);
+    const registry = new CollectionRegistry(asStore(store), DEFAULTS, 'http://x', true);
+    const indexer = registry.get('a');
+    if (indexer === null) throw new Error('missing indexer');
+    vi.spyOn(indexer, 'reindex').mockResolvedValue();
+
+    registry.resumeAll();
+    registry.closeAll();
+
+    expect(store.counts).not.toHaveBeenCalled();
+    expect(store.getCollection).not.toHaveBeenCalled();
+  });
+});

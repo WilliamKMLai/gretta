@@ -20,8 +20,9 @@
  * they can feel, and why a collection quietly gets better at finding its own
  * figures the more it is used.
  */
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { resolve, sep } from 'node:path';
 import type { SqliteStore, StoredFigure } from './store.sqlite.mts';
 import type { Describer } from './describer.mts';
 import type { Embedder } from './embedder.mts';
@@ -49,6 +50,10 @@ export interface FigureContext {
   resolveSource: (source: string) => string | null;
   embedder: Embedder;
   describer: Describer;
+  /** Optional abort signal cancelled on collection delete or model change. */
+  signal?: AbortSignal | undefined;
+  /** Guards detached writes against model changes or collection deletion. */
+  canCommit?: (() => boolean) | undefined;
   /** Called after a re-embed so the packed query matrix is not stale. */
   invalidate: () => void;
 }
@@ -79,11 +84,13 @@ async function renderFigure(
   absolute: string,
   figure: StoredFigure,
 ): Promise<{ mediaType: string; bytes: Buffer; width: number; height: number } | null> {
-  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const data = new Uint8Array(await readFile(absolute));
-  const task = getDocument({ data, useSystemFonts: true });
-  const doc = await task.promise;
+  let destroyTask: (() => Promise<void>) | null = null;
   try {
+    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const data = new Uint8Array(await readFile(absolute));
+    const task = getDocument({ data, useSystemFonts: true });
+    destroyTask = () => task.destroy();
+    const doc = await task.promise;
     if (figure.page < 1 || figure.page > doc.numPages) return null;
     const page = await doc.getPage(figure.page);
     const viewport = page.getViewport({ scale: 1 });
@@ -93,7 +100,13 @@ async function renderFigure(
     // A figure that will not render is a missing picture, never a failed query.
     return null;
   } finally {
-    await task.destroy();
+    if (destroyTask !== null) {
+      try {
+        await destroyTask();
+      } catch {
+        // Best-effort pdf.js worker cleanup.
+      }
+    }
   }
 }
 
@@ -113,7 +126,7 @@ export async function describeFigure(
 ): Promise<boolean> {
   let description: string;
   try {
-    description = await context.describer.describe(imageBase64, figure.caption);
+    description = await context.describer.describe(imageBase64, figure.caption, context.signal);
   } catch (error) {
     // Unreachable Ollama and "this model has no vision" both land here. Both
     // are conditions the user fixes in Settings, not failures of this figure.
@@ -121,6 +134,7 @@ export async function describeFigure(
     return false;
   }
   if (description === '') return false;
+  if (context.canCommit !== undefined && !context.canCommit()) return false;
 
   store.saveFigureDescription(figure.id, description, new Date().toISOString());
 
@@ -128,8 +142,9 @@ export async function describeFigure(
   // generated description keeps the chunk's leading tokens trustworthy.
   const text = `${figure.caption}\n\n${description}`;
   try {
-    const [vector] = await context.embedder.embed([text]);
+    const [vector] = await context.embedder.embed([text], context.signal);
     if (vector === undefined) return false;
+    if (context.canCommit !== undefined && !context.canCommit()) return false;
     store.updateChunkForFigure(figure.id, text, vector);
     context.invalidate();
   } catch {
@@ -163,7 +178,12 @@ function toResult(
 /** Resolves a folder-relative source against a collection's folders. */
 export function sourceResolver(folders: readonly string[]): (source: string) => string | null {
   return (source) => {
-    const first = folders[0];
-    return first === undefined ? null : join(first, source);
+    for (const folder of folders) {
+      const root = resolve(folder);
+      const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+      const candidate = resolve(root, source);
+      if (candidate.startsWith(prefix) && existsSync(candidate)) return candidate;
+    }
+    return null;
   };
 }

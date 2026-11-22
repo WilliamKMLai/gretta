@@ -242,7 +242,9 @@ async function parseBibtex(path: string): Promise<ParseResult> {
     : { ok: true, blocks };
 }
 
-const HTML_BLOCK_BREAK_TAGS = /<\/(?:p|div|li|h[1-6]|tr|blockquote)>|<br\s*\/?>/giu;
+const HTML_BLOCK_BREAK_TAGS =
+  /<\/(?:p|div|li|h[1-6]|tr|blockquote|section|article|pre)>|<(?:br|hr)\s*\/?>/giu;
+const HTML_CELL_END_TAGS = /<\/t[dh]>/giu;
 
 const HTML_NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
@@ -253,12 +255,18 @@ const HTML_NAMED_ENTITIES: Record<string, string> = {
   nbsp: ' ',
 };
 
+function isValidEntityCodePoint(cp: number): boolean {
+  return Number.isInteger(cp) && cp >= 1 && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff);
+}
+
 function decodeHtmlEntities(text: string): string {
   return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/gu, (whole, code: string) => {
     if (code.startsWith('#')) {
-      return code[1] === 'x' || code[1] === 'X'
-        ? String.fromCodePoint(parseInt(code.slice(2), 16))
-        : String.fromCodePoint(parseInt(code.slice(1), 10));
+      const cp =
+        code[1] === 'x' || code[1] === 'X'
+          ? parseInt(code.slice(2), 16)
+          : parseInt(code.slice(1), 10);
+      return isValidEntityCodePoint(cp) ? String.fromCodePoint(cp) : '\uFFFD';
     }
     return HTML_NAMED_ENTITIES[code] ?? whole;
   });
@@ -275,9 +283,9 @@ export function stripHtml(html: string): string {
     .replace(/<script[^>]*>[\s\S]*?<\/script>/giu, '')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/giu, '')
     .replace(/<!--[\s\S]*?-->/gu, '');
-  // Block-level tags become paragraph breaks before the rest are stripped —
-  // the source has no page/paragraph numbering, so this is the one citation-
-  // granularity decision for HTML, mirroring how .md is left as plain prose.
+  // Block-level tags become paragraph breaks and table cells stay separated
+  // before the rest are stripped — mirroring how .md is left as plain prose.
+  text = text.replace(HTML_CELL_END_TAGS, ' ');
   text = text.replace(HTML_BLOCK_BREAK_TAGS, '\n\n');
   text = text.replace(/<[^>]+>/gu, '');
   return decodeHtmlEntities(text);

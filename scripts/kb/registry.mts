@@ -71,7 +71,9 @@ export class CollectionRegistry {
   resumeAll(): void {
     for (const [id, entry] of this.entries) {
       this.arm(id);
-      void entry.indexer.reindex();
+      entry.indexer.reindex().catch((error: unknown) => {
+        console.error(`[gretta-kb] Index failed for "${id}": ${String(error)}`);
+      });
     }
   }
 
@@ -95,6 +97,7 @@ export class CollectionRegistry {
   delete(id: string): boolean {
     const entry = this.entries.get(id);
     if (entry === undefined) return false;
+    entry.indexer.cancel();
     this.disarm(entry);
     this.store.deleteCollection(id);
     this.entries.delete(id);
@@ -162,7 +165,10 @@ export class CollectionRegistry {
   }
 
   closeAll(): void {
-    for (const entry of this.entries.values()) this.disarm(entry);
+    for (const entry of this.entries.values()) {
+      entry.indexer.cancel();
+      this.disarm(entry);
+    }
   }
 
   /** (Re)installs debounced watchers for a collection's folders. */
@@ -170,13 +176,15 @@ export class CollectionRegistry {
     const entry = this.entries.get(id);
     if (entry === undefined || !this.watchEnabled) return;
     this.disarm(entry);
-    for (const folder of entry.indexer.status().folders) {
+    for (const folder of entry.indexer.folders) {
       try {
         const watcher = watch(folder, { recursive: true }, () => {
           if (entry.timer !== null) clearTimeout(entry.timer);
           entry.timer = setTimeout(() => {
             entry.timer = null;
-            void entry.indexer.reindex();
+            entry.indexer.reindex().catch((error: unknown) => {
+              console.error(`[gretta-kb] Watch reindex failed for "${id}": ${String(error)}`);
+            });
           }, WATCH_DEBOUNCE_MS);
         });
         watcher.on('error', () => {

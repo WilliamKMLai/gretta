@@ -18,11 +18,14 @@
  * result is cached.
  */
 
+/** Per-call ceiling so a wedged vision request releases its in-flight slot. */
+export const OLLAMA_DESCRIBE_TIMEOUT_MS = 120_000;
+
 /** Describes a rendered figure. One method so the indexer assumes no provider. */
 export interface Describer {
   readonly model: string;
   /** Base64 PNG in, one paragraph of searchable prose out. */
-  describe(imageBase64: string, caption: string): Promise<string>;
+  describe(imageBase64: string, caption: string, signal?: AbortSignal): Promise<string>;
 }
 
 /** Thrown when the vision backend is unreachable; never fatal to indexing. */
@@ -70,13 +73,18 @@ interface ChatResponse {
 export class OllamaDescriber implements Describer {
   readonly model: string;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
 
-  constructor(model: string, baseUrl: string) {
+  constructor(model: string, baseUrl: string, timeoutMs = OLLAMA_DESCRIBE_TIMEOUT_MS) {
     this.model = model;
     this.baseUrl = baseUrl;
+    this.timeoutMs = timeoutMs;
   }
 
-  async describe(imageBase64: string, caption: string): Promise<string> {
+  async describe(imageBase64: string, caption: string, signal?: AbortSignal): Promise<string> {
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const requestSignal =
+      signal === undefined ? timeoutSignal : AbortSignal.any([signal, timeoutSignal]);
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/api/chat`, {
@@ -99,8 +107,12 @@ export class OllamaDescriber implements Describer {
             },
           ],
         }),
+        signal: requestSignal,
       });
     } catch (cause) {
+      if (signal?.aborted === true) {
+        throw cause instanceof Error ? cause : new Error('Aborted');
+      }
       throw new DescribeUnreachableError(
         `Ollama is unreachable at ${this.baseUrl}. Is "ollama serve" running?`,
         cause,

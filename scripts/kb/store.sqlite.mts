@@ -26,7 +26,7 @@
  * changing at all.
  */
 import DatabaseConstructor from 'better-sqlite3';
-import type { Database } from 'better-sqlite3';
+import type { Database, Statement } from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { TARGET_VERSION, isFromFuture, migrate, schemaVersion } from './migrate.mts';
 
@@ -131,13 +131,40 @@ export interface CollectionRow {
   lastIndexedAt: string | null;
 }
 
+interface RawCollectionRow {
+  id: string;
+  name: string;
+  folders: string;
+  embeddingModel: string;
+  indexFigures: number | null;
+  lastIndexedAt: string | null;
+}
+
+function toCollectionRow(row: RawCollectionRow): CollectionRow {
+  return {
+    id: row.id,
+    name: row.name,
+    folders: JSON.parse(row.folders) as string[],
+    embeddingModel: row.embeddingModel,
+    indexFigures: row.indexFigures === 1,
+    lastIndexedAt: row.lastIndexedAt,
+  };
+}
+
 /** SQLite-backed store; one instance per companion process. */
 export class SqliteStore {
   private readonly db: Database;
+  private readonly selectCollectionStmt: Statement<[string], RawCollectionRow>;
+  private readonly fileHashStmt: Statement<[string, string], { hash: string }>;
+  private readonly fileCountStmt: Statement<[string], { n: number }>;
+  private readonly chunkCountStmt: Statement<[string], { n: number }>;
+  private readonly figureCountsStmt: Statement<[string], { total: number; described: number }>;
 
   constructor(filename: string) {
     this.db = new DatabaseConstructor(filename);
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('busy_timeout = 5000');
     this.db.exec(SCHEMA);
 
     /*
@@ -155,6 +182,18 @@ export class SqliteStore {
       );
     }
     migrate(this.db);
+
+    this.selectCollectionStmt = this.db.prepare('SELECT * FROM collections WHERE id = ?');
+    this.fileHashStmt = this.db.prepare(
+      'SELECT hash FROM files WHERE collectionId = ? AND source = ?',
+    );
+    this.fileCountStmt = this.db.prepare('SELECT COUNT(*) AS n FROM files WHERE collectionId = ?');
+    this.chunkCountStmt = this.db.prepare(
+      'SELECT COUNT(*) AS n FROM chunks WHERE collectionId = ?',
+    );
+    this.figureCountsStmt = this.db.prepare(
+      'SELECT COUNT(*) AS total, COUNT(describedAt) AS described FROM figures WHERE collectionId = ?',
+    );
   }
 
   close(): void {
@@ -162,66 +201,65 @@ export class SqliteStore {
   }
 
   listCollections(): CollectionRow[] {
-    const rows = this.db.prepare('SELECT * FROM collections ORDER BY name').all() as {
-      id: string;
-      name: string;
-      folders: string;
-      embeddingModel: string;
-      indexFigures: number | null;
-      lastIndexedAt: string | null;
-    }[];
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      folders: JSON.parse(row.folders) as string[],
-      embeddingModel: row.embeddingModel,
-      indexFigures: row.indexFigures === 1,
-      lastIndexedAt: row.lastIndexedAt,
-    }));
+    const rows = this.db
+      .prepare('SELECT * FROM collections ORDER BY name')
+      .all() as RawCollectionRow[];
+    return rows.map(toCollectionRow);
   }
 
   getCollection(id: string): CollectionRow | null {
-    return this.listCollections().find((row) => row.id === id) ?? null;
+    const row = this.selectCollectionStmt.get(id);
+    return row === undefined ? null : toCollectionRow(row);
   }
 
   upsertCollection(row: Omit<CollectionRow, 'lastIndexedAt'>): void {
-    const previous = this.getCollection(row.id);
-    this.db
-      .prepare(
-        `INSERT INTO collections (id, name, folders, embeddingModel, indexFigures, lastIndexedAt)
-         VALUES (@id, @name, @folders, @embeddingModel, @indexFigures, NULL)
-         ON CONFLICT(id) DO UPDATE SET
-           name = @name, folders = @folders, embeddingModel = @embeddingModel,
-           indexFigures = @indexFigures`,
-      )
-      .run({
-        ...row,
-        folders: JSON.stringify(row.folders),
-        indexFigures: row.indexFigures ? 1 : 0,
-      });
-    // Vectors from a different model are not comparable — drop and rebuild.
-    //
-    // Toggling figure detection forces the same rebuild (ADR-036), and for a
-    // structural reason rather than a numerical one: figure captions are their
-    // own chunks, so turning the switch either way changes which chunks exist.
-    // Leaving the old ones behind would mean captions retrievable with no
-    // figure attached, or figures with no chunk pointing at them.
-    const modelChanged = previous !== null && previous.embeddingModel !== row.embeddingModel;
-    const figuresToggled = previous !== null && previous.indexFigures !== row.indexFigures;
-    if (modelChanged || figuresToggled) this.clearCollection(row.id);
+    const run = this.db.transaction(() => {
+      const previous = this.getCollection(row.id);
+      this.db
+        .prepare(
+          `INSERT INTO collections (id, name, folders, embeddingModel, indexFigures, lastIndexedAt)
+           VALUES (@id, @name, @folders, @embeddingModel, @indexFigures, NULL)
+           ON CONFLICT(id) DO UPDATE SET
+             name = @name, folders = @folders, embeddingModel = @embeddingModel,
+             indexFigures = @indexFigures`,
+        )
+        .run({
+          ...row,
+          folders: JSON.stringify(row.folders),
+          indexFigures: row.indexFigures ? 1 : 0,
+        });
+      // Vectors from a different model are not comparable — drop and rebuild.
+      //
+      // Toggling figure detection forces the same rebuild (ADR-036), and for a
+      // structural reason rather than a numerical one: figure captions are their
+      // own chunks, so turning the switch either way changes which chunks exist.
+      // Leaving the old ones behind would mean captions retrievable with no
+      // figure attached, or figures with no chunk pointing at them.
+      const modelChanged = previous !== null && previous.embeddingModel !== row.embeddingModel;
+      const figuresToggled = previous !== null && previous.indexFigures !== row.indexFigures;
+      if (modelChanged || figuresToggled) this.clearCollection(row.id);
+    });
+    run();
   }
 
   deleteCollection(id: string): void {
-    this.clearCollection(id);
-    this.db.prepare('DELETE FROM tex_macro_state WHERE collectionId = ?').run(id);
-    this.db.prepare('DELETE FROM collections WHERE id = ?').run(id);
+    const run = this.db.transaction(() => {
+      this.clearCollection(id);
+      this.db.prepare('DELETE FROM collections WHERE id = ?').run(id);
+    });
+    run();
   }
 
-  /** Drops indexed content but keeps the collection definition. */
+  /** Drops indexed content (and cached .tex macro state) while keeping the collection row. */
   clearCollection(id: string): void {
-    this.db.prepare('DELETE FROM chunks WHERE collectionId = ?').run(id);
-    this.db.prepare('DELETE FROM files WHERE collectionId = ?').run(id);
-    this.db.prepare('DELETE FROM figures WHERE collectionId = ?').run(id);
+    const run = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM chunks WHERE collectionId = ?').run(id);
+      this.db.prepare('DELETE FROM files WHERE collectionId = ?').run(id);
+      this.db.prepare('DELETE FROM figures WHERE collectionId = ?').run(id);
+      this.db.prepare('DELETE FROM tex_macro_state WHERE collectionId = ?').run(id);
+      this.db.prepare('UPDATE collections SET lastIndexedAt = NULL WHERE id = ?').run(id);
+    });
+    run();
   }
 
   markIndexed(id: string, isoTimestamp: string): void {
@@ -230,10 +268,7 @@ export class SqliteStore {
 
   /** Hash recorded for a source at last index, or null when never indexed. */
   fileHash(collectionId: string, source: string): string | null {
-    const row = this.db
-      .prepare('SELECT hash FROM files WHERE collectionId = ? AND source = ?')
-      .get(collectionId, source) as { hash: string } | undefined;
-    return row?.hash ?? null;
+    return this.fileHashStmt.get(collectionId, source)?.hash ?? null;
   }
 
   /** Sources currently recorded for a collection (to detect deletions). */
@@ -404,23 +439,13 @@ export class SqliteStore {
   }
 
   figureCounts(collectionId: string): { total: number; described: number } {
-    const row = this.db
-      .prepare(
-        `SELECT COUNT(*) AS total, COUNT(describedAt) AS described
-         FROM figures WHERE collectionId = ?`,
-      )
-      .get(collectionId) as { total: number; described: number };
-    return row;
+    return this.figureCountsStmt.get(collectionId) ?? { total: 0, described: 0 };
   }
 
   counts(collectionId: string): { fileCount: number; chunkCount: number } {
-    const files = this.db
-      .prepare('SELECT COUNT(*) AS n FROM files WHERE collectionId = ?')
-      .get(collectionId) as { n: number };
-    const chunks = this.db
-      .prepare('SELECT COUNT(*) AS n FROM chunks WHERE collectionId = ?')
-      .get(collectionId) as { n: number };
-    return { fileCount: files.n, chunkCount: chunks.n };
+    const files = this.fileCountStmt.get(collectionId);
+    const chunks = this.chunkCountStmt.get(collectionId);
+    return { fileCount: files?.n ?? 0, chunkCount: chunks?.n ?? 0 };
   }
 
   /** Every chunk of the given collections, for brute-force cosine ranking. */

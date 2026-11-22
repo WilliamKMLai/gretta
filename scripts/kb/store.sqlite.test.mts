@@ -107,7 +107,7 @@ describe('SqliteStore', () => {
     expect(store.counts('a')).toEqual({ fileCount: 1, chunkCount: 1 });
   });
 
-  it('invalidates stored vectors when a collection changes embedding model', () => {
+  it('invalidates stored vectors and resets lastIndexedAt when changing embedding model', () => {
     store.upsertCollection({
       id: 'a',
       name: 'A',
@@ -116,6 +116,7 @@ describe('SqliteStore', () => {
       indexFigures: false,
     });
     store.replaceFile('a', 'doc.md', 'h1', [chunk('doc.md', 'v1', [1, 0])]);
+    store.markIndexed('a', '2026-08-01T00:00:00.000Z');
     store.upsertCollection({
       id: 'a',
       name: 'A',
@@ -125,6 +126,21 @@ describe('SqliteStore', () => {
     });
     expect(store.counts('a')).toEqual({ fileCount: 0, chunkCount: 0 });
     expect(store.getCollection('a')?.embeddingModel).toBe('m2');
+    expect(store.getCollection('a')?.lastIndexedAt).toBeNull();
+  });
+
+  it('clears cached .tex macro state when clearing a collection', () => {
+    store.upsertCollection({
+      id: 'a',
+      name: 'A',
+      folders: [],
+      embeddingModel: 'm1',
+      indexFigures: false,
+    });
+    store.setTexMacroHash('a', 'macro-fingerprint');
+    expect(store.getTexMacroHash('a')).toBe('macro-fingerprint');
+    store.clearCollection('a');
+    expect(store.getTexMacroHash('a')).toBeNull();
   });
 
   it('keeps vectors when a rename leaves the model untouched', () => {
@@ -315,5 +331,29 @@ describe('SqliteStore', () => {
       const { rowIds } = store.chunkVectors(['a']);
       expect(store.chunksByRowIds([...rowIds, 999_999])).toHaveLength(1);
     });
+  });
+
+  it('updates a figure chunk in place via figureId without disturbing sibling chunks', () => {
+    store.upsertCollection({
+      id: 'a',
+      name: 'A',
+      folders: [],
+      embeddingModel: 'm1',
+      indexFigures: true,
+    });
+    store.replaceFile('a', 'paper.pdf', 'h1', [
+      { source: 'paper.pdf', page: 1, paragraph: null, text: 'prose', embedding: [1, 0] },
+      {
+        source: 'paper.pdf',
+        page: 2,
+        paragraph: null,
+        text: 'Figure 1.',
+        embedding: [0, 1],
+        figureId: 'fig-1',
+      },
+    ]);
+    store.updateChunkForFigure('fig-1', 'Figure 1.\n\nDescribed plot.', [0.6, 0.8]);
+    const chunks = store.allChunks(['a']);
+    expect(chunks.map((c) => c.text)).toEqual(['prose', 'Figure 1.\n\nDescribed plot.']);
   });
 });
