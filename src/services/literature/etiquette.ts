@@ -77,6 +77,51 @@ export function backoffMs(attempt: number, retryAfterHeader: string | null): num
   return Math.min(exponential, MAX_BACKOFF_MS);
 }
 
+function toAbortError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error
+    ? reason
+    : new DOMException('The operation was aborted.', 'AbortError');
+}
+
+/** Throws immediately when `signal` has already aborted. */
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted === true) {
+    throw toAbortError(signal);
+  }
+}
+
+/**
+ * Pauses for `ms` milliseconds unless `signal` aborts first.
+ *
+ * Pacing (~1 s) and `429`/`5xx` `Retry-After` backoffs (up to 30 s) must yield
+ * immediately when a search is cancelled or superseded; an uninterruptible
+ * `setTimeout` leaves cancelled runs hanging and firing requests after abort.
+ */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) {
+    return Promise.reject(toAbortError(signal));
+  }
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (signal === undefined) {
+      setTimeout(resolve, ms);
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(toAbortError(signal));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * Builds a client identifier string.
  *

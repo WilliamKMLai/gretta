@@ -35,7 +35,13 @@ import {
   type OpenAlexWork,
   type VenueStanding,
 } from './openalex.schemas';
-import { backoffMs, minIntervalMs, parseRateLimit } from './etiquette';
+import {
+  abortableSleep,
+  backoffMs,
+  minIntervalMs,
+  parseRateLimit,
+  throwIfAborted,
+} from './etiquette';
 
 const DEFAULT_BASE_URL = 'https://api.openalex.org';
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -117,11 +123,6 @@ export interface OpenAlexClient {
 
 const defaultTransport: HttpTransport = (url, init) => fetch(url, init);
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -153,8 +154,9 @@ export function createOpenAlexClient(config: LiteratureClientConfig = {}): OpenA
         : `${baseUrl}${path}${separator}api_key=${encodeURIComponent(apiKey)}`;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      throwIfAborted(signal);
       const elapsed = Date.now() - lastRequestAt;
-      if (elapsed < pacingMs) await sleep(pacingMs - elapsed);
+      if (elapsed < pacingMs) await abortableSleep(pacingMs - elapsed, signal);
 
       const controller = new AbortController();
       const onAbort = (): void => {
@@ -198,7 +200,7 @@ export function createOpenAlexClient(config: LiteratureClientConfig = {}): OpenA
             { code: String(response.status) },
           );
         }
-        await sleep(backoffMs(attempt, response.headers.get('Retry-After')));
+        await abortableSleep(backoffMs(attempt, response.headers.get('Retry-After')), signal);
         continue;
       }
 

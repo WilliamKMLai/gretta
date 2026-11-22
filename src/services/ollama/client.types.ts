@@ -105,7 +105,6 @@ export type StreamEvent =
  * (never raw `TypeError`s or unvalidated payloads).
  */
 export interface OllamaClient {
-  /** `GET /api/version` — cheap reachability + CORS probe. */
   /**
    * `GET /api/version`. `baseUrlOverride` exists so a caller can probe a second
    * address without rebuilding a client — used to try the Mac HTTPS proxy when

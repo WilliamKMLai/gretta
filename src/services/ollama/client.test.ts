@@ -304,6 +304,30 @@ describe('OllamaClient · failure mapping', () => {
     });
     await expect(blocked.listModels()).rejects.toMatchObject({ kind: 'cors-or-mixed-content' });
   });
+
+  it('ends cleanly when cancelled while the no-cors failure probe is in flight', async () => {
+    const controller = new AbortController();
+    const transport: HttpTransport = (_url, init) => {
+      if (init.mode === 'no-cors') {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true },
+          );
+          controller.abort();
+        });
+      }
+      return Promise.reject(new TypeError('fetch failed'));
+    };
+    const client = createOllamaClient({ baseUrl: BASE, transport });
+
+    const { events, error } = await drain(client.chat(CHAT_REQ, controller.signal));
+    expect(events).toEqual([]);
+    expect(error).toBeNull();
+  });
 });
 
 describe('OllamaClient · non-streaming and unary endpoints', () => {
@@ -331,12 +355,20 @@ describe('OllamaClient · non-streaming and unary endpoints', () => {
     ]);
   });
 
-  it('health() parses /api/version', async () => {
+  it('health() parses /api/version and honors baseUrlOverride', async () => {
+    const urls: string[] = [];
     const client = createOllamaClient({
       baseUrl: BASE,
-      transport: respondWith(new Response('{"version":"0.9.9"}', { status: 200 })),
+      transport: (url) => {
+        urls.push(url);
+        return Promise.resolve(new Response('{"version":"0.9.9"}', { status: 200 }));
+      },
     });
     await expect(client.health()).resolves.toEqual({ version: '0.9.9' });
+    await expect(client.health(undefined, 'https://localhost:11435')).resolves.toEqual({
+      version: '0.9.9',
+    });
+    expect(urls).toEqual([`${BASE}/api/version`, 'https://localhost:11435/api/version']);
   });
 
   it('listModels() normalizes /api/tags including missing detail fields', async () => {

@@ -54,12 +54,6 @@ export interface KnowledgeBaseClient {
   pickFolder(signal?: AbortSignal): Promise<PickFolderResult>;
 
   /**
-   * `POST /query` — top-k relevant chunks across the given collections. Returns
-   * an empty array when the selection is empty, the collections are empty, or
-   * the companion is unreachable; a failed retrieval must never break generation
-   * (ADR-020), so callers treat "no companion" as "no extra context".
-   */
-  /**
    * `GET /figures/:collectionId/:figureId` — a figure's pixels (ADR-036).
    *
    * Rendered by the companion on first request and cached, so this is fast
@@ -77,6 +71,12 @@ export interface KnowledgeBaseClient {
     signal?: AbortSignal,
   ): Promise<FigureImage | null>;
 
+  /**
+   * `POST /query` — top-k relevant chunks across the given collections. Returns
+   * an empty array when the selection is empty, the collections are empty, or
+   * the companion is unreachable; a failed retrieval must never break generation
+   * (ADR-020), so callers treat "no companion" as "no extra context".
+   */
   query(
     query: string,
     collectionIds: string[],

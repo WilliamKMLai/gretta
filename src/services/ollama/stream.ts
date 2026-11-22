@@ -65,8 +65,9 @@ async function mapNetworkFailure(
   baseUrl: string,
   transport: HttpTransport,
   cause: unknown,
+  signal: AbortSignal,
 ): Promise<OllamaError> {
-  const kind = await classifyFetchFailure(baseUrl, transport);
+  const kind = await classifyFetchFailure(baseUrl, transport, signal);
   return kind === 'offline'
     ? new OllamaError('offline', 'Ollama is not reachable. Is it running? Try `ollama serve`.', {
         cause,
@@ -79,6 +80,7 @@ async function mapNetworkFailure(
 }
 
 export async function* runStream(args: StreamRunArgs): AsyncGenerator<StreamEvent, void, unknown> {
+  const isCallerAborted = (): boolean => args.signal.aborted;
   const abort = composeAbort(args.signal, args.timeoutMs);
 
   let response: Response;
@@ -91,14 +93,16 @@ export async function* runStream(args: StreamRunArgs): AsyncGenerator<StreamEven
     });
   } catch (cause) {
     abort.cleanup();
-    if (args.signal.aborted) return; // clean cancellation
+    if (isCallerAborted()) return; // clean cancellation
     if (abort.didTimeout()) {
       throw new OllamaError(
         'timeout',
         `Ollama did not respond within ${String(args.timeoutMs)} ms.`,
       );
     }
-    throw await mapNetworkFailure(args.baseUrl, args.transport, cause);
+    const failure = await mapNetworkFailure(args.baseUrl, args.transport, cause, args.signal);
+    if (isCallerAborted()) return; // cancelled while classifying the failure
+    throw failure;
   }
 
   try {
@@ -221,7 +225,7 @@ async function* pumpNdjson(
       }
     }
   } finally {
-    args.signal.removeEventListener('abort', onAbort);
+    abort.signal.removeEventListener('abort', onAbort);
     void reader.cancel().catch(() => undefined);
   }
 }

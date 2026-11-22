@@ -16,7 +16,13 @@
 import { LiteratureError } from '../../types/errors';
 import type { LiteratureRecord } from '../../types/literature';
 import type { HttpTransport, LiteratureClientConfig, LiteratureSearchClient } from './client.types';
-import { backoffMs, minIntervalMs, parseRateLimit } from './etiquette';
+import {
+  abortableSleep,
+  backoffMs,
+  minIntervalMs,
+  parseRateLimit,
+  throwIfAborted,
+} from './etiquette';
 import { queryText, type ApprovedQuery } from './query';
 import { parseArticleSet, parsePmidList, type PubMedArticle } from './pubmed.schemas';
 
@@ -28,11 +34,6 @@ const MAX_ATTEMPTS = 3;
 const TOOL_NAME = 'gretta';
 
 const defaultTransport: HttpTransport = (url, init) => fetch(url, init);
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 /** A PubMed search result: records plus the MEDLINE status per PMID. */
 export interface PubMedSearchResult {
@@ -70,8 +71,9 @@ export function createPubMedClient(config: LiteratureClientConfig = {}): PubMedC
     const url = identify(path);
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      throwIfAborted(signal);
       const elapsed = Date.now() - lastRequestAt;
-      if (elapsed < pacingMs) await sleep(pacingMs - elapsed);
+      if (elapsed < pacingMs) await abortableSleep(pacingMs - elapsed, signal);
 
       const controller = new AbortController();
       const onAbort = (): void => {
@@ -110,7 +112,7 @@ export function createPubMedClient(config: LiteratureClientConfig = {}): PubMedC
             { code: String(response.status) },
           );
         }
-        await sleep(backoffMs(attempt, response.headers.get('Retry-After')));
+        await abortableSleep(backoffMs(attempt, response.headers.get('Retry-After')), signal);
         continue;
       }
 
@@ -145,7 +147,7 @@ export function createPubMedClient(config: LiteratureClientConfig = {}): PubMedC
     try {
       return parsePmidList(JSON.parse(await request(path, signal)));
     } catch (cause) {
-      if (cause instanceof LiteratureError) throw cause;
+      if (signal?.aborted === true || cause instanceof LiteratureError) throw cause;
       throw new LiteratureError(
         'invalid-response',
         'pubmed',

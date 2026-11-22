@@ -22,8 +22,8 @@
  *    could be confused.
  */
 
-/** Sources GRETTA can search. Each is separately enabled and off by default. */
-export type LiteratureSourceId = 'pubmed' | 'crossref' | 'arxiv' | 'biorxiv' | 'openalex';
+/** Sources GRETTA can search or attribute discovered records to (ADR-031). */
+export type LiteratureSourceId = 'pubmed' | 'crossref' | 'biorxiv' | 'medrxiv' | 'openalex';
 
 /** CSL-compatible contributor. `given` is null for corporate/consortium names. */
 export interface Contributor {
@@ -41,7 +41,7 @@ export interface IssuedDate {
 /**
  * Work type. Distinguishing an article from an editorial or erratum matters:
  * ADR-029 shows it as a credibility signal, and a `preprint` is labelled rather
- * than demoted, since arXiv/bioRxiv are requested sources.
+ * than demoted, since bioRxiv and medRxiv are requested sources.
  */
 export type WorkType =
   | 'article'
@@ -90,7 +90,7 @@ export interface OpenAlexSignals {
   fwci: number | null;
   /** `cited_by_percentile_year`, 0..100. */
   citedByPercentileYear: number | null;
-  /** Raw count: displayed as context, never used for ranking (ADR-029). */
+  /** Raw count: shown as context and log-scaled for `litCitationImpactWeight` (ADR-029). */
   citedByCount: number | null;
   isParatext: boolean | null;
 }

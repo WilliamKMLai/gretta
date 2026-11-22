@@ -20,7 +20,7 @@ import type { HostPlatform } from '../../types/domain';
 import { joinUrl } from '../../utils/url';
 import type { HttpTransport } from './client.types';
 import { parseVersion } from './schemas';
-import { defaultTransport } from './transport';
+import { composeAbort, defaultTransport } from './transport';
 
 const VERSION_TIMEOUT_MS = 5000;
 const PING_TIMEOUT_MS = 3000;
@@ -36,6 +36,7 @@ export interface DiagnoseArgs {
   baseUrl: string;
   platform: HostPlatform;
   transport?: HttpTransport;
+  signal?: AbortSignal | undefined;
 }
 
 function describeUnknown(value: unknown): string {
@@ -44,16 +45,24 @@ function describeUnknown(value: unknown): string {
 }
 
 /** True when *anything* answers a no-cors ping — reachable but maybe blocked. */
-async function answersOpaquePing(baseUrl: string, transport: HttpTransport): Promise<boolean> {
+async function answersOpaquePing(
+  baseUrl: string,
+  transport: HttpTransport,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (signal?.aborted === true) return false;
+  const abort = composeAbort(signal, PING_TIMEOUT_MS);
   try {
     await transport(baseUrl, {
       method: 'GET',
       mode: 'no-cors',
-      signal: AbortSignal.timeout(PING_TIMEOUT_MS),
+      signal: abort.signal,
     });
     return true;
   } catch {
     return false;
+  } finally {
+    abort.cleanup();
   }
 }
 
@@ -65,8 +74,11 @@ async function answersOpaquePing(baseUrl: string, transport: HttpTransport): Pro
 export async function classifyFetchFailure(
   baseUrl: string,
   transport: HttpTransport,
+  signal?: AbortSignal,
 ): Promise<'offline' | 'cors-or-mixed-content'> {
-  return (await answersOpaquePing(baseUrl, transport)) ? 'cors-or-mixed-content' : 'offline';
+  return (await answersOpaquePing(baseUrl, transport, signal))
+    ? 'cors-or-mixed-content'
+    : 'offline';
 }
 
 /** Classifies connectivity to an Ollama base URL. Never throws. */
@@ -76,13 +88,18 @@ export async function diagnoseConnection(args: DiagnoseArgs): Promise<Connection
 
   let response: Response;
   try {
-    response = await transport(joinUrl(args.baseUrl, '/api/version'), {
-      method: 'GET',
-      signal: AbortSignal.timeout(VERSION_TIMEOUT_MS),
-    });
+    const abort = composeAbort(args.signal, VERSION_TIMEOUT_MS);
+    try {
+      response = await transport(joinUrl(args.baseUrl, '/api/version'), {
+        method: 'GET',
+        signal: abort.signal,
+      });
+    } finally {
+      abort.cleanup();
+    }
   } catch (error) {
     const detail = describeUnknown(error);
-    if (!(await answersOpaquePing(args.baseUrl, transport))) {
+    if (!(await answersOpaquePing(args.baseUrl, transport, args.signal))) {
       return { status: 'offline', detail };
     }
     const mixedContent = args.platform === 'Mac' && args.baseUrl.startsWith('http:');

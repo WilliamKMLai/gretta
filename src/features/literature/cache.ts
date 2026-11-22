@@ -38,6 +38,7 @@ import type {
   CrossrefSignals,
   IssuedDate,
   LiteratureRecord,
+  LiteratureSourceId,
   OpenAlexSignals,
   PubMedSignals,
   StanceAssessment,
@@ -82,7 +83,13 @@ const WorkTypeSchema = z.enum([
   'other',
 ]);
 
-const LiteratureSourceIdSchema = z.enum(['pubmed', 'crossref', 'arxiv', 'biorxiv', 'openalex']);
+const LiteratureSourceIdSchema = z.enum([
+  'pubmed',
+  'crossref',
+  'biorxiv',
+  'medrxiv',
+  'openalex',
+]) satisfies ZodType<LiteratureSourceId>;
 
 const LiteratureRecordSchema = z.object({
   id: z.string(),

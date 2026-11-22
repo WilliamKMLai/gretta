@@ -197,6 +197,24 @@ describe('createCrossrefClient — search', () => {
     await expect(client.search(query(), 10)).rejects.toMatchObject({ kind: 'http' });
     expect(transport).toHaveBeenCalledTimes(1);
   });
+
+  it('aborts a 429 Retry-After backoff immediately without issuing a second call', async () => {
+    const controller = new AbortController();
+    const transport: HttpTransport = vi.fn(() => {
+      setTimeout(() => {
+        controller.abort();
+      }, 5);
+      return Promise.resolve(
+        new Response('', { status: 429, headers: { ...FAST_LIMIT, 'Retry-After': '30' } }),
+      );
+    });
+    const client = createCrossrefClient({ transport, initialPacingMs: 0 });
+
+    await expect(client.search(query(), 10, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('createCrossrefClient — searchPreprints', () => {
@@ -262,6 +280,32 @@ describe('createCrossrefClient — searchPreprints', () => {
     const anonymous = { ...preprint, institution: undefined };
     const client = createCrossrefClient({ transport: posted([anonymous]), initialPacingMs: 0 });
     expect(await client.searchPreprints(query(), 10, 'biorxiv')).toEqual([]);
+  });
+
+  it('selects lean fields, over-fetches 2x then slices to limit, and attributes discoveredVia', async () => {
+    const items = [
+      { ...medPreprint, DOI: '10.1101/med-1' },
+      { ...medPreprint, DOI: '10.1101/med-2' },
+      { ...preprint, DOI: '10.1101/bio-1' },
+      { ...preprint, DOI: '10.1101/bio-2' },
+      { ...preprint, DOI: '10.1101/bio-3' },
+    ];
+    const transport = posted(items);
+    const client = createCrossrefClient({ transport, initialPacingMs: 0 });
+
+    const bio = await client.searchPreprints(query(), 2, 'biorxiv');
+    const url = decodeURIComponent(vi.mocked(transport).mock.calls[0]?.[0] ?? '');
+
+    expect(url).toContain('rows=4');
+    expect(url).toContain('&select=DOI,title,author,container-title,issued,abstract,type,URL');
+    expect(bio).toHaveLength(2);
+    expect(bio.every((record) => record.discoveredVia === 'biorxiv')).toBe(true);
+
+    const med = await createCrossrefClient({
+      transport: posted([medPreprint]),
+      initialPacingMs: 0,
+    }).searchPreprints(query(), 5, 'medrxiv');
+    expect(med[0]?.discoveredVia).toBe('medrxiv');
   });
 });
 
@@ -420,6 +464,16 @@ describe('createCrossrefClient — lookupUpdates', () => {
 
   it('marks a failed lookup as unchecked rather than as an all-clear', async () => {
     const transport: HttpTransport = vi.fn(() => Promise.reject(new TypeError('network')));
+    const client = createCrossrefClient({ transport, initialPacingMs: 0 });
+
+    expect((await client.lookupUpdates([TARGET])).get(TARGET)).toEqual({
+      checked: false,
+      updates: [],
+    });
+  });
+
+  it('marks a batch unchecked when a 200 payload lacks message.items', async () => {
+    const transport: HttpTransport = vi.fn(() => Promise.resolve(json({ unexpected: true })));
     const client = createCrossrefClient({ transport, initialPacingMs: 0 });
 
     expect((await client.lookupUpdates([TARGET])).get(TARGET)).toEqual({

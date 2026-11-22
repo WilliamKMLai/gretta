@@ -78,23 +78,28 @@ export function createOllamaClient(config: OllamaClientConfig): OllamaClient {
     model: string,
     signal?: AbortSignal,
     timeoutOverrideMs?: number,
+    baseUrlOverride?: string,
   ): Promise<unknown> {
+    const targetBaseUrl = baseUrlOverride ?? config.baseUrl;
+    const isCallerAborted = (): boolean => signal?.aborted === true;
     const budgetMs = timeoutOverrideMs ?? UNARY_TIMEOUT_MS;
     const abort = composeAbort(signal, budgetMs);
     let response: Response;
     try {
-      response = await transport(endpoint(path), {
+      response = await transport(joinUrl(targetBaseUrl, path), {
         method: init.method,
         headers: init.body === undefined ? {} : { 'Content-Type': 'application/json' },
         body: init.body === undefined ? null : JSON.stringify(init.body),
         signal: abort.signal,
       });
     } catch (cause) {
-      if (signal?.aborted) throw cause; // caller cancelled — pass through untyped
+      abort.cleanup();
+      if (isCallerAborted()) throw cause; // caller cancelled — pass through untyped
       if (abort.didTimeout()) {
         throw new OllamaError('timeout', `Ollama did not respond within ${String(budgetMs)} ms.`);
       }
-      const kind = await classifyFetchFailure(config.baseUrl, transport);
+      const kind = await classifyFetchFailure(targetBaseUrl, transport, signal);
+      if (isCallerAborted()) throw cause; // cancelled while classifying the failure
       throw kind === 'offline'
         ? new OllamaError(
             'offline',
@@ -134,8 +139,15 @@ export function createOllamaClient(config: OllamaClientConfig): OllamaClient {
   }
 
   return {
-    async health(signal?: AbortSignal): Promise<{ version: string }> {
-      const json = await requestJson('/api/version', { method: 'GET' }, '', signal);
+    async health(signal?: AbortSignal, baseUrlOverride?: string): Promise<{ version: string }> {
+      const json = await requestJson(
+        '/api/version',
+        { method: 'GET' },
+        '',
+        signal,
+        undefined,
+        baseUrlOverride,
+      );
       return validated(() => parseVersion(json));
     },
 

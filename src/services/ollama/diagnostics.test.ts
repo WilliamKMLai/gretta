@@ -57,4 +57,34 @@ describe('diagnoseConnection', () => {
       diagnoseConnection({ baseUrl: 'https://localhost:11435', platform: 'Mac', transport }),
     ).resolves.toMatchObject({ status: 'blocked', reason: 'cors' });
   });
+
+  it('aborts in-flight probes immediately when the caller signal aborts', async () => {
+    const controller = new AbortController();
+    let pingCalls = 0;
+    const transport: HttpTransport = (_url, init) => {
+      if (init.mode === 'no-cors') {
+        pingCalls += 1;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener(
+          'abort',
+          () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          },
+          { once: true },
+        );
+        controller.abort();
+      });
+    };
+
+    const result = await diagnoseConnection({
+      baseUrl: BASE,
+      platform: 'Mac',
+      transport,
+      signal: controller.signal,
+    });
+    expect(result.status).toBe('offline');
+    expect(pingCalls).toBe(0);
+  });
 });
