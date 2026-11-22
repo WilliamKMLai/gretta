@@ -94,10 +94,11 @@ yet built (see `ROADMAP.md`).
    - **Venue citation threshold** — a journal that charges to publish, is absent from DOAJ,
      and is cited less often than this draws a caution badge (0–50, default 0.2). The default
      is provisional, so tune it rather than trust it.
-   - **Citation impact weight** — how much a result's citation impact for its publication
-     year (OpenAlex) can nudge it up the ranking, on top of relevance to your selection
-     (0–1, default 0.25). It only breaks close calls between similarly relevant results; set
-     it to 0 for pure relevance ranking.
+   - **Citation impact weight** — how much a result's log-scaled citation count (OpenAlex,
+     saturating at 200 citations) boosts its position on top of relevance to your selection
+     (0–1, default 0.6). Values up to ~0.3 mainly break close calls; the 0.6 default lets
+     well-cited papers climb substantially. Set it to 0 for pure relevance ranking (non-article
+     records such as datasets, errata, and front/back matter are still demoted).
 6. Click **Search.** This is the only step that reaches the network, and only for the sources
    you've enabled.
 
@@ -135,8 +136,13 @@ received, plus notes on any per-source adaptation — e.g. PubMed retries with `
 terms if a strict `AND`ed query returns nothing, and bioRxiv/medRxiv queries are noted as
 having gone through Crossref, filtered to preprints from that server.
 
-Results aren't cached, saved, or exported from this panel — it's transient state that clears
-when you navigate away or run a new search.
+Completed searches are cached locally in browser storage (`gretta/literature-cache`) for 24
+hours (capped at 20 entries, oldest evicted first) and listed under **Recent searches** in the
+panel. Clicking a recent search reuses its cached records immediately (re-ranking locally if
+your selected passage changed), whereas clicking **Search** always fetches fresh results. Your
+selected passage itself is never stored in this cache — only its hash. Because cached queries
+reflect what you are writing about, **Settings → Literature → Clear literature cache and search
+history** deletes the stored cache and clears the in-memory panel state immediately.
 
 ## What this does not send
 
@@ -171,6 +177,5 @@ when you navigate away or run a new search.
 
 - Sending a found paper's full text into the knowledge base for use in generation.
 - Inserting a citation into the document from a result.
-- A results cache (every search today is a fresh set of requests to every enabled source).
 
 See `ROADMAP.md` for status on all of these.

@@ -29,6 +29,11 @@ Windows, Word for Mac, and Word on the web** from one codebase.
   it indexes them on-device with your own embedding model and injects relevant excerpts into
   your prompts, **with every excerpt cited** by file and page or paragraph. Documents bind to
   named collections, and the binding is stored inside the `.docx` so it travels with the file.
+- **Figures and vision** — attach, paste, or drop an image onto the prompt box, read a selected
+  figure straight out of the open Word document, or enable **Index figures** on a knowledge-base
+  collection to find figures in PDFs by their captions, render them on demand, and describe them
+  in the background. Vision support is verified live via Ollama (`/api/show`), with an optional
+  dedicated **Vision model** setting.
 - **Scholarly literature search** — highlight a passage, have your local model draft a search
   query from it, review the exact text before anything is sent, then search PubMed, bioRxiv,
   medRxiv, and OpenAlex. Results are re-ranked **on your machine** against the passage itself,
@@ -93,7 +98,7 @@ pnpm dev             # serves https://localhost:3000
 
 Then sideload `manifest/manifest.xml` into Word — platform-by-platform steps in [docs/SIDELOADING.md](docs/SIDELOADING.md) — and click **Open GRETTA** on the Home ribbon. Use the pane's **Ollama connection check** to confirm the pane can reach your daemon (see [Connecting to Ollama](#connecting-to-ollama) below, especially on a Mac).
 
-**On a Mac, skip the juggling** — one command sideloads the manifest and starts both the dev server and the Ollama proxy together:
+**On a Mac, skip the juggling** — one command sideloads the manifest and starts the dev server, the Ollama HTTPS proxy, and the knowledge-base companion together:
 
 ```bash
 pnpm dev:mac         # then quit and reopen Word once
@@ -234,15 +239,19 @@ deeper; not necessary just to use it.
 | `pnpm setup`                        | First-run checks: Node, pnpm, dependencies, certificate, Ollama models          |
 | `pnpm dev`                          | HTTPS dev server on port 3000 (what Word loads)                                 |
 | `pnpm dev:web`                      | HTTP dev server in browser mode (`VITE_OFFICE_MOCK=1`)                          |
-| `pnpm dev:mac`                      | **Mac one-command loader:** sideload + dev + proxy together (see below)         |
+| `pnpm dev:mac`                      | **Mac one-command loader:** sideload + dev + proxy + kb together                |
 | `pnpm build`                        | Production build → `dist/` (taskpane + commands entries)                        |
 | `pnpm typecheck`                    | `tsc --noEmit` across the app and node TS projects                              |
 | `pnpm lint`                         | ESLint: strict type-checked rules + architecture boundaries                     |
 | `pnpm test` / `pnpm test:watch`     | Vitest (jsdom) unit/component tests                                             |
+| `pnpm test:kb-native`               | Vitest suite for better-sqlite3 knowledge-base storage and schema migrations    |
 | `pnpm e2e`                          | Playwright smoke tests against browser dev mode¹                                |
+| `pnpm smoke:boot`                   | Executes the built production bundle in jsdom to verify shell startup           |
+| `pnpm smoke:lit`                    | Live scholarly API smoke checks (opt-in; requires internet access)              |
 | `pnpm format` / `pnpm format:check` | Prettier                                                                        |
 | `pnpm validate:manifest`            | Validates `manifest/manifest.xml` (calls Microsoft's validator; needs internet) |
 | `pnpm proxy`                        | HTTPS → Ollama loopback proxy for Word for Mac (see below)                      |
+| `pnpm kb`                           | Local knowledge-base companion on port 11436 (RAG indexing and retrieval)       |
 | `pnpm certs:install`                | Create + trust the localhost dev certificate                                    |
 | `pnpm check`                        | Full quality gate: typecheck + lint + format + test + build                     |
 
@@ -263,13 +272,18 @@ runs every gate. All gates pass on a clean checkout; `validate:manifest` and `e2
 ```
 manifest/         Office add-in XML manifest (WordApi 1.3 baseline)
 public/assets/    Ribbon + store icons
-scripts/          dev-mac.mjs (one-command Mac loader) · ollama-https-proxy.mjs (loopback proxy)
+scripts/          setup.mjs · dev-mac.mjs · ollama-https-proxy.mjs · boot-smoke.mjs
+  kb/             Local knowledge-base companion (SQLite index, PDF/DOCX/LaTeX/figure pipeline)
 src/
   app/            Shell, providers, composition root, views
   commands/       Ribbon function-command runtime
-  services/       office / ollama / storage / clipboard boundaries
-  types/          Shared domain model
-  utils/          Pure helpers
+  components/     Shared presentational primitives
+  features/       ai · document · history · knowledgebase · literature · prompts · settings
+  hooks/          Shared query, layout, and keyboard-shortcut hooks
+  services/       office / ollama / knowledgebase / literature / storage / clipboard boundaries
+  styles/         Global styles
+  types/          Shared domain, KB, literature, and error types
+  utils/          Pure helpers (tokens, markdown, URLs, IDs, time, download)
 tests/  e2e/      Vitest setup · Playwright specs
 ```
 

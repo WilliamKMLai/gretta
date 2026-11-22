@@ -174,13 +174,6 @@ All notable changes to this project are documented here. Format loosely follows
 - The default "Results per source" is now 20, down from 50 — a lighter starting point given
   the cost in search time and embedding work; raise it per search from the Advanced panel
   when a topic needs a wider net.
-- Literature ranking now gives a nudge to results with high citation impact for their
-  publication year (OpenAlex), on top of relevance to your selection (ADR-029). This only
-  breaks close calls — a clearly more relevant result still wins regardless of citations —
-  so a well-established paper that ranked just outside the top few on relevance alone is more
-  likely to surface near the top; it will not pull an unrelated but highly-cited paper into a
-  search it doesn't belong in. How strong the nudge is is now a "Citation impact weight" field
-  under Advanced search parameters (default 0.25, was a fixed 0.15); set it to 0 to turn it off.
 - Knowledge-base retrieval is roughly 20x faster at collections near the 30,000-chunk capacity
   ceiling, and proportionally faster below it (ADR-020). Ranking now scans a single packed,
   pre-normalized matrix with a bare dot product instead of decoding every stored vector into a
