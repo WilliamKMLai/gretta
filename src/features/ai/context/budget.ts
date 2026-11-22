@@ -18,6 +18,7 @@
  * is precisely the bug that motivated this work.
  */
 import { estimateTokens, charsForTokens, trimMiddle } from '../../../utils/tokens';
+import { formatChunks } from './knowledgeBaseProvider';
 import type { ContextBlock } from './provider';
 
 /** Share of the prompt budget retrieved excerpts may collectively occupy. */
@@ -110,9 +111,7 @@ function dropWeakestExcerpt(blocks: ContextBlock[]): TrimNote | null {
     blocks[target] = {
       ...block,
       sources: remaining,
-      text: remaining
-        .map((chunk, i) => `[${String(i + 1)}] ${chunk.source}\n${chunk.text}`)
-        .join('\n\n'),
+      text: formatChunks(remaining),
     };
   }
   return {

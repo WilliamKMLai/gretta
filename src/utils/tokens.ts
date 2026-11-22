@@ -69,6 +69,10 @@ export function observeRatio(
   return Math.min(PLAUSIBLE_RATIO.max, Math.max(PLAUSIBLE_RATIO.min, blended));
 }
 
+function omissionMarker(omitted: number): string {
+  return `\n\n[… ${omitted.toLocaleString()} characters omitted to fit the context window …]\n\n`;
+}
+
 /**
  * Shortens text to a character budget, keeping the beginning and the end and
  * eliding the middle. Documents carry their framing at the top and their
@@ -77,13 +81,24 @@ export function observeRatio(
  * left to infer a non-sequitur.
  */
 export function trimMiddle(text: string, maxChars: number): string {
-  if (maxChars <= 0) return '';
-  if (text.length <= maxChars) return text;
-  const omitted = text.length - maxChars;
-  const marker = `\n\n[… ${omitted.toLocaleString()} characters omitted to fit the context window …]\n\n`;
-  const keep = maxChars - marker.length;
-  if (keep <= 0) return marker.trim();
+  const budget = Math.floor(maxChars);
+  if (budget <= 0) return '';
+  if (text.length <= budget) return text;
+
+  let keep = Math.max(0, budget - omissionMarker(text.length - budget).length);
+  let marker = omissionMarker(text.length - keep);
+  keep = Math.max(0, budget - marker.length);
+  marker = omissionMarker(text.length - keep);
+
+  if (budget - marker.length <= 0) {
+    const compact = marker.trim();
+    if (compact.length <= budget) return compact;
+    return budget === 1 ? '…' : `${text.slice(0, budget - 1).trimEnd()}…`;
+  }
+
+  keep = budget - marker.length;
   const head = Math.ceil(keep * 0.6);
   const tail = keep - head;
-  return `${text.slice(0, head).trimEnd()}${marker}${tail > 0 ? text.slice(text.length - tail).trimStart() : ''}`;
+  const suffix = tail > 0 ? text.slice(text.length - tail).trimStart() : '';
+  return `${text.slice(0, head).trimEnd()}${marker}${suffix}`;
 }

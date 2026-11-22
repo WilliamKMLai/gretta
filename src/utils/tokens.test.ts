@@ -86,5 +86,26 @@ describe('trimMiddle', () => {
 
   it('returns nothing for a zero budget', () => {
     expect(trimMiddle('anything', 0)).toBe('');
+    expect(trimMiddle('anything', -5)).toBe('');
+  });
+
+  it('reports the exact number of characters omitted rather than text.length - maxChars', () => {
+    const text = 'A'.repeat(1000);
+    const trimmed = trimMiddle(text, 200);
+    const match = /\[… ([\d,]+) characters omitted/u.exec(trimmed);
+    expect(match).not.toBeNull();
+    const reportedOmitted = Number((match?.[1] ?? '0').replace(/,/gu, ''));
+    const kept = Array.from(trimmed).filter((ch) => ch === 'A').length;
+    expect(reportedOmitted).toBe(text.length - kept);
+    expect(trimmed.length).toBeLessThanOrEqual(200);
+  });
+
+  it('never exceeds maxChars even when the budget is smaller than the omission marker', () => {
+    const text = 'A'.repeat(500);
+    for (const budget of [1, 2, 10, 20, 50, 55, 58, 61, 62, 65]) {
+      const trimmed = trimMiddle(text, budget);
+      expect(trimmed.length).toBeLessThanOrEqual(budget);
+      expect(trimmed.length).toBeGreaterThan(0);
+    }
   });
 });
