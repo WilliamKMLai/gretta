@@ -11,6 +11,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # One in-flight run per branch/PR; newer pushes cancel older runs.
 concurrency:
   group: ci-${{ github.ref }}
@@ -26,8 +29,6 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 11.13.1
 
       - name: Set up Node
         uses: actions/setup-node@v4

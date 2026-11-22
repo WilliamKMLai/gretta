@@ -31,19 +31,21 @@ An **Open GRETTA** button appears on the Home ribbon.
 ```bash
 pnpm install
 pnpm certs:install    # once per machine: trust the localhost dev certificate
-pnpm dev:mac          # sideloads the manifest, starts dev server + Ollama proxy
+pnpm dev:mac          # sideloads the manifest, starts dev server + Ollama proxy + KB companion
 ```
 
 `pnpm dev:mac` does everything the manual steps below used to require: it copies
-the manifest into Word's `wef` folder, starts the Vite dev server and the
-HTTPS→Ollama proxy together (logs are prefixed `[dev]` and `[proxy]`), and tears
-both down on Ctrl+C. The only manual step it can't do is restart Word — Word
-reads the add-in folder only at launch, so **quit Word completely (⌘Q) and
-reopen** after the first run. Then **Home → Add-ins → GRETTA**, and set the
-Ollama URL in Settings to `https://localhost:11435`.
+the manifest into Word's `wef` folder, starts the Vite dev server, the
+HTTPS→Ollama proxy, and the knowledge-base companion together (logs are prefixed
+`[dev]`, `[proxy]`, and `[kb]`), and tears all three down on Ctrl+C. The only
+manual step it can't do is restart Word — Word reads the add-in folder only at
+launch, so **quit Word completely (⌘Q) and reopen** after the first run. Then
+**Home → Add-ins → GRETTA**; when the default `http://127.0.0.1:11434` health
+check fails, GRETTA automatically falls back to `https://localhost:11435` (or
+you can set it manually in Settings).
 
 Re-run with `pnpm dev:mac --no-sideload` if the manifest is already in place and
-you just want the two servers.
+you just want the servers.
 
 <details>
 <summary><strong>Manual steps (fallback, if you prefer to run pieces yourself)</strong></summary>

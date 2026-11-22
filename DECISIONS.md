@@ -2767,3 +2767,122 @@ and a cancelled or failed run deliberately keeps its attachments to retry with, 
 dedupe each attempt stacked another copy of the same figure. Deduping on the payload rather
 than tracking origin also fixes pasting the same image twice, and needs no notion of where an
 attachment came from.
+
+---
+
+## ADR-036 — Figures are found by their captions, described on demand
+
+**Status:** Accepted (2026-08-12)
+
+**Context.** ADR-034 and ADR-035 let a user hand GRETTA a picture. The knowledge base still
+cannot: a figure inside an indexed PDF is invisible except for whatever its caption happens to
+say, and `parsePdf` throws the pixels away by design.
+
+This is the case the whole feature was requested for. In a paper, the figure is frequently
+where the result actually lives.
+
+**A figure has no marker in a PDF.** There is no object to enumerate. Worse, in scientific
+papers a plot is usually _vector_ — matplotlib, Illustrator, TikZ — so there is no embedded
+image to extract either. Raster-XObject extraction, which needs no new dependency, was measured
+against real papers and misses essentially all of them.
+
+**Decision.**
+
+_Captions are the anchor._ A figure reliably has one line of text next to it beginning
+"Figure 3." or "Table 1:". That gives the page, the column, the words a reader would search
+for, and — through the whitespace around it — the region worth rendering.
+
+_Rendering takes `@napi-rs/canvas`._ Prebuilt binaries, no node-gyp, companion-process only.
+Verified before anything else was written: pdf.js v6 legacy loads under
+`--experimental-strip-types`, drives the canvas with no DOMMatrix/Path2D shims, and rasterises
+vector figures correctly at ~11ms a page. Mac and Windows are first-class; Linux keeps text-only
+indexing, the same platform stance as ADR-033.
+
+_Crop, don't render the page._ A whole journal page downscaled to what a vision model looks at
+makes 8pt axis labels unreadable, and axis labels are most of what distinguishes one plot from
+another. The band between the caption and the surrounding body text gets the whole resolution
+budget.
+
+_Embedding stays text-only, in one vector space._ A figure becomes an ordinary text chunk. No
+image embeddings, no second space — that would break the single packed matrix `topKPacked`
+scans and the per-collection "one embedding model" invariant, and it would retrieve _worse_:
+what makes a scientific figure findable is text, in its caption, its axis labels, and the prose
+around it. **Embedding finds the figure; vision reads it.**
+
+_Described on demand, never at index time._ Measured on a 12B vision model: **16.3 seconds per
+figure**, twice the working estimate. At ~7 figures a paper that is 19 minutes for 10 papers,
+95 minutes for 50, over 6 hours for 200 — and because Ollama serializes, that is not background
+time, it is time GRETTA cannot be used for writing. Indexing therefore records a figure from its
+caption alone, at effectively zero cost, and everything expensive happens the first time
+something asks.
+
+_Pixels are urgent; the description is not._ A generation waiting on a figure needs the picture
+now (~11ms). It does **not** need a description — the vision model it is about to reach will
+read the picture directly, so describing first would be the same work twice at 16 seconds of
+added latency. The describe therefore runs detached and re-embeds the chunk when it lands,
+making the _next_ search find that figure better. A collection quietly improves at finding its
+own figures the more it is used.
+
+_The cache key is (content hash, page, region)._ A re-index of an unchanged file produces the
+same figure ids, and `replaceFigures` refreshes captions while leaving descriptions and pixels
+alone. Without that, every reindex would discard work costing 16 seconds a figure — which is
+what makes on-demand viable rather than merely deferred.
+
+_Per-collection, off by default._ Like the embedding model, this changes what is _in_ the
+collection, so it belongs beside it rather than in global settings. Toggling it forces a rebuild
+for a structural reason rather than a numerical one: figure captions are their own chunks, so
+turning the switch either way changes which chunks exist.
+
+_Figures are charged to the budget before they are fetched._ They cannot be fetched first —
+budgeting decides which chunks survive, and a figure whose citation was trimmed must not be
+sent. So an upper bound (capped at two per run) is reserved up front. Over-reserving costs at
+most one excerpt; under-reserving reintroduces ADR-025's silent front-truncation.
+
+_A schema migration mechanism, finally._ The store applied its schema with
+`CREATE TABLE IF NOT EXISTS` and had no way to alter an existing one — which works exactly once,
+and every user who has indexed anything has a populated database. `PRAGMA user_version` with
+ordered transactional steps, and a database from a newer build is refused rather than downgraded.
+
+**Consequences.** The companion gains its first non-text capability and its first dependency
+that draws pixels. Indexing stays as fast as it was — only captions are recorded — but the
+database now grows with use rather than only with content, since every figure looked at stores
+its rendered PNG.
+
+Detection was tuned against 22 real papers (Nature, Science, PNAS, NAR, EMBO, bioRxiv, arXiv):
+**242 figures, 12% falling back to a full page, one paper detecting nothing** — correctly, as it
+has no figures. Three failure modes only real papers revealed: wrapped body text beginning with
+an in-text reference ("Table 1). Therefore…"), figure-internal text acting as the region
+boundary (53% fallback before it was fixed), and a case-insensitive panel-letter group eating
+the first three characters of a title, which took two papers from eleven detections to zero.
+Those strings are now the test corpus, since the papers themselves cannot be committed.
+
+The heuristic will meet layouts it does not understand. The failure mode is a missing figure or
+a full-page render, never a broken index — and a figure that is never described is a slightly
+worse search result, not an error.
+
+### ADR-036 amendment — Figures are chosen when a collection is created
+
+**Status:** Accepted (2026-08-13)
+
+The switch shipped only inside the per-collection editor, on the reasoning that it belongs next
+to the embedding model because both change what is in the collection. That reasoning was right
+about where it belongs and wrong about when it is offered.
+
+Turning figures on afterwards forces a full rebuild — figure captions are their own chunks, so
+the chunk set genuinely changes and there is no cheaper correct path. Offering the choice only
+after a collection exists therefore guarantees that anyone who wants figures pays an index they
+did not need to pay. The decision is cheapest at exactly the moment the collection is created,
+and that was the one moment it could not be made.
+
+_The switch is on the add-collection form as well as in the editor._ Same control, same copy,
+both gated on the companion advertising `describeFigures`. The editor keeps it for changing one's
+mind, and now says plainly that changing it re-indexes.
+
+_The collection card shows figure state._ `N figures (M described)` once the feature is on. A
+setting reachable only two clicks inside an editor is a setting nobody finds — which is exactly
+how this gap was reported. The count doubles as progress, since descriptions accrue with use.
+
+**Consequences.** Two places now construct a `CollectionConfig`, and both must keep passing the
+flag; the type makes it required rather than optional precisely so a third caller cannot forget.
+The default stays off in both, because figures are useful to some corpora and pure overhead to
+others, and a switch that turns itself on is worse than one that has to be found.

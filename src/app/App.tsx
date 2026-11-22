@@ -28,7 +28,12 @@ import {
 } from '@fluentui/react-icons';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { APP_TOASTER_ID } from '../components/toaster';
-import { ModelPicker, useStreamStore } from '../features/ai';
+import {
+  ModelPicker,
+  abortActiveGeneration,
+  useAttachmentsStore,
+  useStreamStore,
+} from '../features/ai';
 import { useHistoryStore } from '../features/history';
 import { PromptPicker } from '../features/prompts';
 import { useTheme } from '../features/settings';
@@ -156,7 +161,9 @@ export function App({ hostInfo }: AppProps): ReactElement {
                   icon={<AddRegular />}
                   aria-label="New prompt"
                   onClick={() => {
+                    abortActiveGeneration();
                     useStreamStore.getState().reset();
+                    useAttachmentsStore.getState().clear();
                     useHistoryStore.getState().setActiveRecord(null);
                     useUiStore.getState().setDraft('');
                     setView('chat');

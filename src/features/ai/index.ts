@@ -9,7 +9,7 @@ export { ConnectionBanner } from './components/ConnectionBanner';
 export { GenerationControls } from './components/GenerationControls';
 export { ModelPicker } from './components/ModelPicker';
 export { ResponseView } from './components/ResponseView';
-export { useGeneration, type UseGenerationResult } from './useGeneration';
+export { abortActiveGeneration, useGeneration, type UseGenerationResult } from './useGeneration';
 export { buildChatRequest, type GenerationInput, type RequestSettings } from './request';
 export { useVisionModel, VISION_CAPABILITY, type VisionModelState } from './useVisionModel';
 export { useAttachmentsStore, MAX_ATTACHMENTS } from './attachments.store';

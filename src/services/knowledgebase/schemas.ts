@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import type {
   CollectionStatus,
+  FigureImage,
   KnowledgeBaseHealth,
   PickFolderResult,
   RetrievedChunk,
@@ -30,6 +31,8 @@ const HealthSchema = z.object({
   dataDir: z.string().optional(),
   // Optional for the same reason, and absent reads as "no dialog" (ADR-033).
   pickFolder: z.boolean().optional(),
+  // Absent reads as false: an older companion never offers figures (ADR-036).
+  describeFigures: z.boolean().optional(),
 });
 
 /**
@@ -60,6 +63,11 @@ const CollectionSchema = z.object({
   skipped: z.array(z.object({ path: z.string(), reason: z.string() })),
   lastIndexedAt: z.string().nullable(),
   message: z.string().nullable(),
+  // Defaulted rather than optional: a companion predating ADR-036 reports no
+  // figure fields, and the pane should read that as "no figures", not crash.
+  indexFigures: z.boolean().default(false),
+  figureCount: z.number().default(0),
+  describedFigureCount: z.number().default(0),
 });
 
 const CollectionsSchema = z.object({ collections: z.array(CollectionSchema) });
@@ -73,9 +81,22 @@ const ChunkSchema = z.object({
   }),
   text: z.string(),
   score: z.number(),
+  figure: z.object({ id: z.string(), caption: z.string(), described: z.boolean() }).optional(),
 });
 
 const QuerySchema = z.object({ chunks: z.array(ChunkSchema) });
+
+const FigureImageSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  page: z.number(),
+  caption: z.string(),
+  description: z.string().nullable(),
+  mediaType: z.string(),
+  dataBase64: z.string().min(1),
+  width: z.number(),
+  height: z.number(),
+}) satisfies z.ZodType<FigureImage>;
 
 /** Companion error bodies: `{ "error": "..." }`. */
 const ErrorBodySchema = z.object({ error: z.string() });
@@ -94,6 +115,10 @@ export function parseCollection(json: unknown): CollectionStatus {
 
 export function parsePickFolder(json: unknown): PickFolderResult {
   return PickFolderSchema.parse(json);
+}
+
+export function parseFigureImage(json: unknown): FigureImage {
+  return FigureImageSchema.parse(json);
 }
 
 export function parseQuery(json: unknown): RetrievedChunk[] {

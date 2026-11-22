@@ -124,6 +124,19 @@ describe('readCache / writeCache', () => {
     expect(entry?.sentQueries).toEqual([{ source: 'PubMed', query: 'q' }]);
   });
 
+  it('round-trips biorxiv and medrxiv discoveredVia values', async () => {
+    const key = cacheKey('preprints', ['biorxiv', 'medrxiv'], null, 20);
+    const bio = record('bio-1');
+    const med = record('med-1');
+    bio.record.discoveredVia = 'biorxiv';
+    med.record.discoveredVia = 'medrxiv';
+
+    await writeCache(key, entryPayload('bio-1', { results: [bio, med] }));
+    const entry = await readCache(key);
+
+    expect(entry?.results.map((item) => item.record.discoveredVia)).toEqual(['biorxiv', 'medrxiv']);
+  });
+
   it('running the same search twice would hit the second time', async () => {
     const key = cacheKey('cats', ['pubmed'], null, 50);
     expect(await readCache(key)).toBeNull();

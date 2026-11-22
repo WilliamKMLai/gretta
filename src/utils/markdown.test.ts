@@ -26,6 +26,31 @@ describe('parseInline', () => {
     ]);
   });
 
+  it('captures links whose URLs contain balanced parentheses (SICI DOIs, Wikipedia)', () => {
+    const nodes = parseInline('(see [Lancet](https://doi.org/10.1016/s0140-6736(97)11096-0))');
+    expect(nodes).toEqual([
+      { type: 'text', value: '(see ' },
+      {
+        type: 'link',
+        value: 'Lancet',
+        href: 'https://doi.org/10.1016/s0140-6736(97)11096-0',
+      },
+      { type: 'text', value: ')' },
+    ]);
+  });
+
+  it('preserves intraword underscores in snake_case and subscripts', () => {
+    expect(parseInline('Compare alpha_1 and alpha_2 with _real_ and __bold__')).toEqual([
+      { type: 'text', value: 'Compare alpha_1 and alpha_2 with ' },
+      { type: 'em', value: 'real' },
+      { type: 'text', value: ' and ' },
+      { type: 'strong', value: 'bold' },
+    ]);
+    expect(markdownToPlainText('Set top_p and top_k in foo__bar__baz.')).toBe(
+      'Set top_p and top_k in foo__bar__baz.',
+    );
+  });
+
   it('leaves unmatched punctuation as text', () => {
     expect(parseInline('2 * 3 = 6')).toEqual([{ type: 'text', value: '2 * 3 = 6' }]);
   });

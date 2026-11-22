@@ -73,6 +73,11 @@ const MessageListSchema = z.object({
   message: z.object({ items: z.array(z.unknown()).optional() }).optional(),
 });
 
+const StrictMessageListSchema = z.object({
+  status: z.string().optional(),
+  message: z.object({ items: z.array(z.unknown()) }),
+});
+
 export type CrossrefWork = z.infer<typeof WorkSchema>;
 
 export function parseWorkList(payload: unknown): CrossrefWork[] {
@@ -80,6 +85,23 @@ export function parseWorkList(payload: unknown): CrossrefWork[] {
   if (!parsed.success) return [];
   const works: CrossrefWork[] = [];
   for (const item of parsed.data.message?.items ?? []) {
+    const work = WorkSchema.safeParse(item);
+    if (work.success) works.push(work.data);
+  }
+  return works;
+}
+
+/**
+ * Strict envelope variant for retraction checks (`lookupUpdates`): when
+ * `message.items` is absent or not an array, returns `null` so callers record
+ * `checked: false` rather than a false "checked, nothing found" all-clear
+ * (ADR-029). Individual malformed items inside a valid array are still skipped.
+ */
+export function parseNoticeList(payload: unknown): CrossrefWork[] | null {
+  const parsed = StrictMessageListSchema.safeParse(payload);
+  if (!parsed.success) return null;
+  const works: CrossrefWork[] = [];
+  for (const item of parsed.data.message.items) {
     const work = WorkSchema.safeParse(item);
     if (work.success) works.push(work.data);
   }

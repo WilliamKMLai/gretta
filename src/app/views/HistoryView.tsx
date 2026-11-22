@@ -3,8 +3,21 @@
  * shows that result again in the chat view — there is nothing to "continue",
  * because each run was a single-shot exchange.
  */
+import { useState } from 'react';
 import type { ReactElement } from 'react';
-import { Button, Subtitle2, Text, makeStyles, tokens } from '@fluentui/react-components';
+import {
+  Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Subtitle2,
+  Text,
+  makeStyles,
+  tokens,
+} from '@fluentui/react-components';
 import { DeleteRegular } from '@fluentui/react-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { useStreamStore } from '../../features/ai';
@@ -31,6 +44,7 @@ export function HistoryView(): ReactElement {
   const records = useHistoryStore((state) => state.records);
   const setActiveRecord = useHistoryStore((state) => state.setActiveRecord);
   const clearRecords = useHistoryStore((state) => state.clearRecords);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   return (
     <div className={styles.root}>
@@ -38,7 +52,14 @@ export function HistoryView(): ReactElement {
         <Subtitle2>History</Subtitle2>
         <div className={styles.spacer} />
         {records.length === 0 ? null : (
-          <Button appearance="subtle" size="small" icon={<DeleteRegular />} onClick={clearRecords}>
+          <Button
+            appearance="subtle"
+            size="small"
+            icon={<DeleteRegular />}
+            onClick={() => {
+              setConfirmingClear(true);
+            }}
+          >
             Clear all
           </Button>
         )}
@@ -70,6 +91,47 @@ export function HistoryView(): ReactElement {
           />
         )}
       </div>
+
+      <Dialog
+        open={confirmingClear}
+        onOpenChange={(_, data) => {
+          setConfirmingClear(data.open);
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Clear generation history?</DialogTitle>
+            <DialogContent>
+              <Text>
+                This permanently removes{' '}
+                {records.length === 1
+                  ? '1 saved generation'
+                  : `all ${String(records.length)} saved generations`}{' '}
+                from this device. Content already inserted into your document is not affected.
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                appearance="secondary"
+                onClick={() => {
+                  setConfirmingClear(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                appearance="primary"
+                onClick={() => {
+                  setConfirmingClear(false);
+                  clearRecords();
+                }}
+              >
+                Clear history
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   );
 }

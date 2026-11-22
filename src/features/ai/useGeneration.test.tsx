@@ -17,7 +17,7 @@ import { useSettingsStore } from '../settings';
 import { useStreamStore } from './stream.store';
 import type { ToastAction } from '../../components/toaster';
 import type { GenerationInput } from './request';
-import { useGeneration } from './useGeneration';
+import { abortActiveGeneration, useGeneration } from './useGeneration';
 
 const toastSpies = vi.hoisted(() => ({
   success: vi.fn(),
@@ -172,6 +172,7 @@ beforeEach(() => {
   vi.stubGlobal('cancelAnimationFrame', (): void => {
     rafQueue = [];
   });
+  abortActiveGeneration();
   useStreamStore.getState().reset();
   useHistoryStore.setState({ records: [], activeRecordId: null });
   useSettingsStore.getState().resetSettings();
@@ -530,5 +531,120 @@ describe('useGeneration — free prompts, settings, and post-actions', () => {
     expect(calls[1]).toEqual(calls[0]);
     // Two runs → two independent records; nothing is "continued" (ADR-021).
     expect(useHistoryStore.getState().records).toHaveLength(2);
+  });
+
+  it('stop() from a remounted hook cancels an active stream after view switch', async () => {
+    const { client } = makeClient(abortableScript([token('partial ')]));
+    setServices({
+      ollama: client,
+      office: makeOffice().office,
+      clipboard: makeClipboard().clipboard,
+    });
+
+    const first = renderHook(() => useGeneration());
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = first.result.current.generate(baseInput());
+      await waitFor(() => {
+        expect(rafQueue).toHaveLength(1);
+      });
+    });
+    act(() => {
+      flushFrames();
+    });
+    first.unmount();
+
+    const second = renderHook(() => useGeneration());
+    act(() => {
+      second.result.current.stop();
+    });
+    await act(async () => {
+      await pending;
+    });
+
+    expect(useStreamStore.getState().status).toBe('cancelled');
+    expect(useStreamStore.getState().text).toBe('partial ');
+    expect(useHistoryStore.getState().records[0]).toMatchObject({
+      response: 'partial ',
+      outcome: 'cancelled',
+    });
+  });
+
+  it('abortActiveGeneration + reset discards an in-flight run without side effects', async () => {
+    const { client } = makeClient(abortableScript([token('partial ')]));
+    const { office, insertAtCursor } = makeOffice();
+    const { clipboard, copy } = makeClipboard();
+    setServices({ ollama: client, office, clipboard });
+    useSettingsStore.getState().setSettings({ autoCopy: true, autoInsert: true });
+
+    const { result } = renderHook(() => useGeneration());
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = result.current.generate(baseInput());
+      await waitFor(() => {
+        expect(rafQueue).toHaveLength(1);
+      });
+    });
+
+    act(() => {
+      abortActiveGeneration();
+      useStreamStore.getState().reset();
+    });
+    await act(async () => {
+      await pending;
+    });
+
+    expect(useStreamStore.getState().status).toBe('idle');
+    expect(useStreamStore.getState().text).toBe('');
+    expect(useHistoryStore.getState().records).toHaveLength(0);
+    expect(copy).not.toHaveBeenCalled();
+    expect(insertAtCursor).not.toHaveBeenCalled();
+  });
+
+  it('counts priorResult in budget so oversized Refine runs report overflow', async () => {
+    const { client, calls } = makeClient(scripted([token('ok'), done()]));
+    setServices({
+      ollama: client,
+      office: makeOffice().office,
+      clipboard: makeClipboard().clipboard,
+    });
+    useSettingsStore.getState().setSettings({ contextLength: 1024 });
+
+    const { result } = renderHook(() => useGeneration());
+    await act(async () => {
+      await result.current.generate(
+        baseInput({
+          template: null,
+          draft: 'Make it shorter',
+          contextSource: 'none',
+          priorResult: 'p'.repeat(20_000),
+        }),
+      );
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(toastSpies.error).toHaveBeenCalledWith(expect.stringContaining('only'));
+    expect(useStreamStore.getState().status).toBe('idle');
+  });
+
+  it('autoInsert strips Markdown and marks the record applied only on success', async () => {
+    const { client } = makeClient(scripted([token('## Heading\n\n**Bold** text'), done()]));
+    const { office, insertAtCursor } = makeOffice();
+    insertAtCursor.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Word busy'));
+    setServices({ ollama: client, office, clipboard: makeClipboard().clipboard });
+    useSettingsStore.getState().setSettings({ autoInsert: true });
+
+    const { result } = renderHook(() => useGeneration());
+    await act(async () => {
+      await result.current.generate(baseInput());
+    });
+
+    expect(insertAtCursor).toHaveBeenCalledWith('Heading\n\nBold text');
+    expect(useHistoryStore.getState().records[0]?.applied?.kind).toBe('insert');
+
+    await act(async () => {
+      await result.current.generate(baseInput());
+    });
+    expect(useHistoryStore.getState().records[0]?.applied).toBeUndefined();
   });
 });

@@ -52,4 +52,33 @@ describe('LiteratureAdvancedParams', () => {
 
     expect(useSettingsStore.getState().litCitationImpactWeight).toBe(0.5);
   });
+
+  it('ignores blank SpinButton edits and clamps out-of-range numbers to [min, max]', async () => {
+    const user = userEvent.setup();
+    useSettingsStore.setState({ litResultsPerSource: 40, litCitationImpactWeight: 0.6 });
+
+    render(wrap(<LiteratureAdvancedParams />));
+    await user.click(screen.getByRole('button', { name: /advanced search parameters/i }));
+
+    const resultsInput = screen.getByRole('spinbutton', { name: /results per source/i });
+    await user.clear(resultsInput);
+    await user.tab();
+    expect(useSettingsStore.getState().litResultsPerSource).toBe(40);
+
+    await user.clear(resultsInput);
+    await user.type(resultsInput, '2');
+    await user.tab();
+    expect(useSettingsStore.getState().litResultsPerSource).toBe(5);
+
+    await user.clear(resultsInput);
+    await user.type(resultsInput, '500');
+    await user.tab();
+    expect(useSettingsStore.getState().litResultsPerSource).toBe(100);
+
+    const weightInput = screen.getByRole('spinbutton', { name: /citation impact weight/i });
+    await user.clear(weightInput);
+    await user.type(weightInput, '2.5');
+    await user.tab();
+    expect(useSettingsStore.getState().litCitationImpactWeight).toBe(1);
+  });
 });

@@ -11,6 +11,25 @@ All notable changes to this project are documented here. Format loosely follows
   chip, paste one from the clipboard, or drop a file onto the prompt box, and ask about it —
   the first thing in GRETTA that is not text. Built for reading figures: plots, panels, and
   diagrams you want a second opinion on.
+- **Figures in your papers** (ADR-036). Turn on **Index figures** for a knowledge-base
+  collection and GRETTA finds the figures in its PDFs by their captions, so "which figure shows
+  the dose response?" retrieves the right one — and when it answers, it looks at the actual
+  picture. Works with vector figures (matplotlib, Illustrator, TikZ), which is most figures in a
+  scientific paper and which nothing short of rendering the page can see.
+  - Indexing stays as fast as it was: only captions are recorded. A figure is rendered the first
+    time something asks for it (about 11ms) and described in the background, so the collection
+    gets better at finding its own figures the more you use it. Nothing waits on the description.
+  - Set when you create a collection, and changeable later in its editor. Off by default in
+    both. Choosing it up front matters: switching it on afterwards re-indexes the collection
+    from scratch, because figure captions are stored as their own excerpts.
+  - A collection's card shows how many figures it holds and how many have been described.
+  - Detection was tuned against 22 real papers across Nature, Science, PNAS, NAR, EMBO, bioRxiv,
+    and arXiv: 242 figures found, 12% falling back to rendering the whole page.
+- **Add a collection** is now a collapsible section in the Knowledge base panel, closed once
+  you have collections and open when you have none — so the panel shows what is in your
+  knowledge base rather than a form you rarely need, and the fields (the figures switch in
+  particular) visibly belong to that form instead of floating at the same weight as everything
+  else.
 - **Figures in the document** (ADR-035). Select a figure with its caption, leave the context
   chip on **Selection**, and the figure goes with the text — no extra click. There is also a
   **Use figure from document** button for sending a figure on its own, or for text-wrapped
@@ -155,13 +174,6 @@ All notable changes to this project are documented here. Format loosely follows
 - The default "Results per source" is now 20, down from 50 — a lighter starting point given
   the cost in search time and embedding work; raise it per search from the Advanced panel
   when a topic needs a wider net.
-- Literature ranking now gives a nudge to results with high citation impact for their
-  publication year (OpenAlex), on top of relevance to your selection (ADR-029). This only
-  breaks close calls — a clearly more relevant result still wins regardless of citations —
-  so a well-established paper that ranked just outside the top few on relevance alone is more
-  likely to surface near the top; it will not pull an unrelated but highly-cited paper into a
-  search it doesn't belong in. How strong the nudge is is now a "Citation impact weight" field
-  under Advanced search parameters (default 0.25, was a fixed 0.15); set it to 0 to turn it off.
 - Knowledge-base retrieval is roughly 20x faster at collections near the 30,000-chunk capacity
   ceiling, and proportionally faster below it (ADR-020). Ranking now scans a single packed,
   pre-normalized matrix with a bare dot product instead of decoding every stored vector into a

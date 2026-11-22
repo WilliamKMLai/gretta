@@ -48,10 +48,12 @@ export type { RateLimit } from './etiquette';
 export {
   FALLBACK_INTERVAL_MS,
   MAX_BACKOFF_MS,
+  abortableSleep,
   backoffMs,
   buildUserAgent,
   minIntervalMs,
   parseRateLimit,
+  throwIfAborted,
   withContact,
 } from './etiquette';
 

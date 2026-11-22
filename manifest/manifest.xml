@@ -14,7 +14,7 @@
   xsi:type="TaskPaneApp">
 
   <Id>0a1d1e0b-8bf7-4b1d-b07b-6bcdc8d1f307</Id>
-  <Version>0.1.0</Version>
+  <Version>1.0.0.0</Version>
   <ProviderName>GRETTA</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="GRETTA" />
@@ -34,8 +34,6 @@
     <AppDomain>https://api.crossref.org</AppDomain>
     <AppDomain>https://api.openalex.org</AppDomain>
     <AppDomain>https://eutils.ncbi.nlm.nih.gov</AppDomain>
-    <AppDomain>https://export.arxiv.org</AppDomain>
-    <AppDomain>https://api.biorxiv.org</AppDomain>
     <AppDomain>https://doi.org</AppDomain>
     <AppDomain>https://pubmed.ncbi.nlm.nih.gov</AppDomain>
   </AppDomains>

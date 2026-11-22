@@ -13,6 +13,7 @@ import type {
   CollectionStatus,
   KnowledgeBaseHealth,
   PickFolderResult,
+  FigureImage,
   RetrievedChunk,
 } from '../../types/knowledgebase';
 import { joinUrl } from '../../utils/url';
@@ -20,6 +21,7 @@ import type { HttpTransport, KnowledgeBaseClient, KnowledgeBaseClientConfig } fr
 import {
   parseCollection,
   parseCollections,
+  parseFigureImage,
   parseHealth,
   parsePickFolder,
   parseQuery,
@@ -159,6 +161,25 @@ export function createKnowledgeBaseClient(config: KnowledgeBaseClientConfig): Kn
         signal,
       );
       return validated(() => parsePickFolder(json));
+    },
+
+    async getFigure(
+      collectionId: string,
+      figureId: string,
+      visionModel: string,
+      signal?: AbortSignal,
+    ): Promise<FigureImage | null> {
+      const path =
+        `/figures/${encodeURIComponent(collectionId)}/${encodeURIComponent(figureId)}` +
+        `?visionModel=${encodeURIComponent(visionModel)}`;
+      try {
+        const json = await request(path, { method: 'GET' }, signal);
+        return validated(() => parseFigureImage(json));
+      } catch {
+        // A figure whose source moved, or a companion too old to know the
+        // route, is a missing picture — never a failed generation (ADR-020).
+        return null;
+      }
     },
 
     async query(

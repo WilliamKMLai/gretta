@@ -32,6 +32,14 @@ export interface GenerationInput {
    * snapshots are pinned against.
    */
   images?: readonly string[];
+  /**
+   * Model that will read images on this run, or null when none can (ADR-036).
+   *
+   * Orchestration only — `buildChatRequest` ignores it, so it cannot affect the
+   * wire payload or the built-in snapshots. `useGeneration` uses it to decide
+   * whether retrieved figures are worth fetching at all.
+   */
+  visionModel?: string | null;
 }
 
 /**

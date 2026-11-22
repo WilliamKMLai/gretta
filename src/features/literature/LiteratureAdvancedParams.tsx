@@ -21,16 +21,22 @@ import { useSettingsStore } from '../settings';
 import { useLiteratureStore } from './literature.store';
 
 /**
- * SpinButton reports either a number or the typed display string. `SpinButton`
- * replaces a clamped `Input` here to fix a real bug: clamping on every
- * keystroke snapped the value back to its minimum after the first digit,
- * making a number like `20` untypeable one digit at a time.
+ * SpinButton fires `onChange` on commit (blur, Enter, or spin), reporting
+ * either a parsed `value` or the typed `displayValue`. Blank strings are
+ * ignored (`Number('') === 0` would otherwise overwrite the setting with 0)
+ * and out-of-range typed numbers are clamped to `[min, max]`.
  */
-function spinValue(data: SpinButtonOnChangeData): number | null {
-  if (typeof data.value === 'number') return data.value;
+function spinValue(data: SpinButtonOnChangeData, min: number, max: number): number | null {
+  if (typeof data.value === 'number' && Number.isFinite(data.value)) {
+    return Math.min(max, Math.max(min, data.value));
+  }
   if (data.displayValue !== undefined) {
-    const parsed = Number(data.displayValue);
-    if (Number.isFinite(parsed)) return parsed;
+    const trimmed = data.displayValue.trim();
+    if (trimmed === '') return null;
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return Math.min(max, Math.max(min, parsed));
+    }
   }
   return null;
 }
@@ -87,7 +93,7 @@ export function LiteratureAdvancedParams(): ReactElement {
                 step={5}
                 value={resultsPerSource}
                 onChange={(_, data) => {
-                  const value = spinValue(data);
+                  const value = spinValue(data, 5, 100);
                   if (value !== null) {
                     setSettings({ litResultsPerSource: Math.round(value) });
                   }
@@ -105,7 +111,7 @@ export function LiteratureAdvancedParams(): ReactElement {
                 step={0.1}
                 value={minVenueCitedness}
                 onChange={(_, data) => {
-                  const value = spinValue(data);
+                  const value = spinValue(data, 0, 50);
                   if (value !== null) {
                     setSettings({ litMinVenueCitedness: Math.round(value * 10) / 10 });
                   }
@@ -123,7 +129,7 @@ export function LiteratureAdvancedParams(): ReactElement {
                 step={0.05}
                 value={citationImpactWeight}
                 onChange={(_, data) => {
-                  const value = spinValue(data);
+                  const value = spinValue(data, 0, 1);
                   if (value !== null) {
                     setSettings({ litCitationImpactWeight: Math.round(value * 100) / 100 });
                   }

@@ -73,7 +73,7 @@ export interface CollectionCardProps {
   onToggleBound: (bound: boolean) => void;
   onReindex: () => void;
   onDelete: () => void;
-  onSave: (config: CollectionConfig) => void;
+  onSave: (config: CollectionConfig) => Promise<boolean>;
 }
 
 export function CollectionCard({
@@ -97,7 +97,7 @@ export function CollectionCard({
         <Body1Strong className={styles.grow}>{collection.name}</Body1Strong>
         {editing ? null : (
           <>
-            <Tooltip content="Edit name, folders, or embedding model" relationship="label">
+            <Tooltip content="Edit name, folders, embedding model, or figures" relationship="label">
               <Button
                 size="small"
                 appearance="subtle"
@@ -140,8 +140,9 @@ export function CollectionCard({
             setEditing(false);
           }}
           onSave={(config) => {
-            setEditing(false);
-            onSave(config);
+            void onSave(config).then((saved) => {
+              if (saved) setEditing(false);
+            });
           }}
         />
       ) : (
@@ -179,6 +180,24 @@ export function CollectionCard({
             </Text>
             <Text size={200}>·</Text>
             <Text size={200}>{collection.embeddingModel}</Text>
+            {/*
+              Figure state is shown on the card because the switch that
+              controls it lives inside the editor, two clicks away — a setting
+              nobody can see is a setting nobody finds. Once figures are on,
+              the count doubles as progress: descriptions accrue as the
+              collection is used (ADR-036).
+            */}
+            {collection.indexFigures ? (
+              <>
+                <Text size={200}>·</Text>
+                <Text size={200}>
+                  {collection.figureCount.toLocaleString()} figures
+                  {collection.describedFigureCount > 0
+                    ? ` (${collection.describedFigureCount.toLocaleString()} described)`
+                    : ''}
+                </Text>
+              </>
+            ) : null}
             {collection.lastIndexedAt === null ? null : (
               <>
                 <Text size={200}>·</Text>

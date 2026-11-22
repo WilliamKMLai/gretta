@@ -33,6 +33,11 @@ describe('abstractToText', () => {
     expect(abstractToText('&#945; and &#x3b2;')).toBe('α and β');
   });
 
+  it('replaces out-of-range, NUL, and surrogate numeric references instead of throwing', () => {
+    const raw = 'a &#x110000; &#99999999999999999999; &#0; &#xd800; &#55296; b';
+    expect(abstractToText(raw)).toBe('a \uFFFD \uFFFD \uFFFD \uFFFD \uFFFD b');
+  });
+
   it('strips tags before decoding, so escaped markup cannot become markup', () => {
     // Decoding first would manufacture a live tag out of escaped content.
     const result = abstractToText('&lt;script&gt;alert(1)&lt;/script&gt; findings');

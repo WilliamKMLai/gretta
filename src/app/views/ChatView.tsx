@@ -25,6 +25,7 @@ import {
   GenerationControls,
   ImageAttachButton,
   ResponseView,
+  abortActiveGeneration,
   useAttachmentsStore,
   useGeneration,
   useImageAttach,
@@ -39,6 +40,7 @@ import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import type { HostInfo } from '../../services/office';
 import type { ContextSource, PromptContextVar } from '../../types/domain';
 import { usePaneLayout } from '../../hooks/usePaneLayout';
+import { markdownToPlainText } from '../../utils/markdown';
 import { formatRelativeTime } from '../../utils/time';
 import { useUiStore } from '../ui.store';
 
@@ -125,7 +127,9 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
 
   /** Clears the pane back to a blank prompt without touching saved history. */
   const startNewPrompt = (): void => {
+    abortActiveGeneration();
     useStreamStore.getState().reset();
+    useAttachmentsStore.getState().clear();
     useHistoryStore.getState().setActiveRecord(null);
     setDraft('');
   };
@@ -151,12 +155,22 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
    * request is built, so a value captured during render would miss it — the
    * store subscription has not re-rendered yet.
    */
-  const resolveRunOptions = (): { model: string; images: string[] } | null => {
+  const resolveRunOptions = (): {
+    model: string;
+    images?: string[];
+    visionModel: string | null;
+  } | null => {
+    // A run with no attachments can still carry figures the knowledge base
+    // retrieves (ADR-036), so the vision model is resolved either way — but the
+    // run is only *routed* to it when there is actually something to look at.
+    const canSee = vision.supportsVision && vision.model !== null;
     const staged = useAttachmentsStore.getState().images;
-    if (staged.length === 0 || vision.reason !== null) return null;
+    const sendAttached = staged.length > 0 && vision.reason === null;
+    if (!canSee && !sendAttached) return null;
     return {
-      model: vision.model ?? model ?? '',
-      images: staged.map((image) => image.dataBase64),
+      model: sendAttached ? (vision.model ?? model ?? '') : (model ?? ''),
+      ...(sendAttached ? { images: staged.map((image) => image.dataBase64) } : {}),
+      visionModel: canSee ? vision.model : null,
     };
   };
 
@@ -279,7 +293,11 @@ export function ChatView({ hostInfo }: ChatViewProps): ReactElement {
             void actions.copy(streamText);
           },
           onInsert: () => {
-            void actions.insertAtCursor(streamText);
+            void actions.insertAtCursor(markdownToPlainText(streamText)).then((ok) => {
+              if (ok && activeRecord !== null) {
+                useHistoryStore.getState().markApplied(activeRecord.id, 'insert');
+              }
+            });
           },
         }),
   });

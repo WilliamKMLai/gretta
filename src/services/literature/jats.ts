@@ -58,12 +58,24 @@ const BLOCK_TAGS = /<\/?(?:jats:)?(?:p|sec|title|abstract|list-item|list|br)\b[^
  */
 const DROP_WITH_CONTENT = /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/giu;
 
+function safeFromCodePoint(codePoint: number): string {
+  if (
+    !Number.isInteger(codePoint) ||
+    codePoint <= 0 ||
+    codePoint > 0x10ffff ||
+    (codePoint >= 0xd800 && codePoint <= 0xdfff)
+  ) {
+    return '\uFFFD';
+  }
+  return String.fromCodePoint(codePoint);
+}
+
 function decodeEntities(text: string): string {
   return text
     .replace(/&#x([0-9a-f]+);/giu, (_match, hex: string) =>
-      String.fromCodePoint(Number.parseInt(hex, 16)),
+      safeFromCodePoint(Number.parseInt(hex, 16)),
     )
-    .replace(/&#(\d+);/gu, (_match, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&#(\d+);/gu, (_match, dec: string) => safeFromCodePoint(Number.parseInt(dec, 10)))
     .replace(/&([a-z]+);/giu, (match, name: string) => ENTITIES[name.toLowerCase()] ?? match);
 }
 

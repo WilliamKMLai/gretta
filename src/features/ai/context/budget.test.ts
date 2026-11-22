@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RetrievedChunk } from '../../../types/knowledgebase';
 import { IMAGE_TOKEN_ESTIMATE, MAX_EXCERPT_SHARE, allocateBudget, describeBudget } from './budget';
+import { EXCERPT_PREAMBLE } from './knowledgeBaseProvider';
 import type { ContextBlock } from './provider';
 
 const chunk = (source: string, score: number, size = 200): RetrievedChunk => ({
@@ -102,6 +103,8 @@ describe('allocateBudget', () => {
     const result = allocateBudget({ ...base, blocks: [block(many)] });
     const kept = result.blocks[0];
     expect(kept).toBeDefined();
+    expect(kept?.text).toContain(EXCERPT_PREAMBLE);
+    expect(kept?.text).toContain('[1] p0.pdf, ¶1');
     for (const source of kept?.sources ?? []) {
       expect(kept?.text).toContain(source.source);
     }

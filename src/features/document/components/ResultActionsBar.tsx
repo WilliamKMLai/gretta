@@ -93,15 +93,12 @@ export function ResultActionsBar({
         ? actions.replaceSelection(forDocument)
         : kind === 'comment'
           ? actions.comment(forDocument)
-          : actions.insertAtCursor(forDocument);
-    void run.then(
-      () => {
-        if (record !== null) useHistoryStore.getState().markApplied(record.id, kind);
-      },
-      () => {
-        /* the action layer already surfaces its own failure toast */
-      },
-    );
+          : kind === 'append'
+            ? actions.appendText(forDocument)
+            : actions.insertAtCursor(forDocument);
+    void run.then((ok) => {
+      if (ok && record !== null) useHistoryStore.getState().markApplied(record.id, kind);
+    });
   };
 
   /**

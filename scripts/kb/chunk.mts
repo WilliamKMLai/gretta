@@ -22,6 +22,15 @@ export interface SourceBlock {
   page: number | null;
   /** 1-based paragraph index within the source; null when unknown. */
   paragraph: number | null;
+  /**
+   * Set when this block is a figure's caption (ADR-036).
+   *
+   * A figure block is ATOMIC: never merged with its neighbours and never given
+   * an overlap prefix, so the chunk that carries a figure's id contains that
+   * figure's caption and nothing else. Anything looser and the citation stops
+   * matching the picture — the one thing a figure chunk exists to guarantee.
+   */
+  figureId?: string | undefined;
 }
 
 /** A retrieval chunk: contiguous blocks, optionally prefixed with overlap. */
@@ -36,6 +45,8 @@ export interface Chunk {
   page: number | null;
   /** Paragraph of the first primary block — the citation paragraph. */
   paragraph: number | null;
+  /** Figure this chunk carries, when its primary block was a figure caption. */
+  figureId?: string | undefined;
 }
 
 /** Chunk sizing, in characters (a stable proxy for tokens; see ADR-020). */
@@ -135,22 +146,34 @@ export function chunkBlocks(
   const flush = (endBlock: number): void => {
     if (firstBlock === null) return;
     const body = current.join('\n\n');
-    const text = overlap === '' ? body : `${overlap}\n\n${body}`;
+    // A figure chunk carries its caption verbatim: no overlap prefix, so the
+    // text stored against the figure is exactly what labels the picture.
+    const isFigure = firstBlock.figureId !== undefined;
+    const text = overlap === '' || isFigure ? body : `${overlap}\n\n${body}`;
     chunks.push({
       text,
       startBlock,
       endBlock,
       page: firstBlock.page,
       paragraph: firstBlock.paragraph,
+      ...(isFigure ? { figureId: firstBlock.figureId } : {}),
     });
-    overlap = tailOverlap(body, options.overlapChars);
+    // A figure's caption is a poor lead-in to the text that follows it, and
+    // carrying it forward would duplicate the caption into the next chunk.
+    overlap = isFigure ? '' : tailOverlap(body, options.overlapChars);
   };
 
   for (let i = 0; i < prepared.length; i += 1) {
     const block = prepared[i];
     if (block === undefined) continue;
     const addition = block.text.length + (current.length > 0 ? 2 : 0);
-    if (currentLen > 0 && currentLen + addition > options.targetChars) {
+    // Figure blocks are atomic (ADR-036): flush whatever is accumulating
+    // before one starts, and flush again immediately after, so a figure chunk
+    // is exactly one caption and its id can never point at a chunk that also
+    // holds unrelated prose.
+    const isFigureBlock = block.figureId !== undefined;
+    const wouldOverflow = currentLen > 0 && currentLen + addition > options.targetChars;
+    if (currentLen > 0 && (wouldOverflow || isFigureBlock || firstBlock?.figureId !== undefined)) {
       flush(i - 1);
       current = [];
       currentLen = 0;

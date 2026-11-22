@@ -33,7 +33,7 @@
     "kb": "node --experimental-strip-types scripts/kb/server.mts",
     "certs:install": "office-addin-dev-certs install",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build",
-    "smoke:boot": "node scripts/boot-smoke.mjs",
+    "smoke:boot": "pnpm build && node scripts/boot-smoke.mjs",
     "smoke:lit": "GRETTA_LIVE_SMOKE=1 vitest run --config vitest.smoke.config.ts",
     "test:kb-native": "vitest run --config vitest.kb-native.config.ts"
   },
@@ -41,6 +41,7 @@
     "@fluentui/react-components": "^9.60.0",
     "@fluentui/react-icons": "^2.0.333",
     "@hookform/resolvers": "^5.0.0",
+    "@napi-rs/canvas": "^1.0.5",
     "@tanstack/react-query": "^5.66.0",
     "better-sqlite3": "^13.0.1",
     "fast-xml-parser": "^5.10.1",
@@ -75,7 +76,7 @@
     "office-addin-manifest": "^2.0.0",
     "office-addin-mock": "^3.0.10",
     "prettier": "^3.5.0",
-    "typescript": "^5.7.0",
+    "typescript": "^5.8.0",
     "typescript-eslint": "^8.24.0",
     "vite": "^7.0.0",
     "vitest": "^4.1.10"

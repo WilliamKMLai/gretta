@@ -45,22 +45,26 @@ for the process a new phase follows.
 - **Phase 17b — The figure in your document**, ADR-035. Read the selected figure out of the
   open document as OOXML and send it, with Windows metafiles (Excel charts, equations)
   detected and explained rather than silently skipped.
+- **Phase 17c — Figures in the knowledge base**, ADR-036. Figures in indexed PDFs are found by
+  their captions, rendered on demand with `@napi-rs/canvas` (so vector figures work), described
+  in the background to improve retrieval, and attached to answers. Adds the companion's first
+  schema-migration mechanism.
 
 ---
 
 ## What's next
 
-### Phase 17c–d — Figures in the knowledge base
+### Phase 17d — Describe-all, with live progress
 
-**Objective:** extend vision from images the user hands over to figures GRETTA finds itself.
+**Objective:** let a user pay the description cost up front when they want to.
 
-**Scope:** figures inside indexed PDFs — caption-anchored detection at index time, rendered
-and described on demand and cached, so a figure becomes an ordinary text chunk in the
-existing vector space with its pixels attached at answer time (ADR-036); and live progress
-for the opt-in "Describe all figures" pass (ADR-037).
+**Scope:** a per-collection "Describe all figures now" action that walks the same on-demand path
+over every figure, with the estimated cost shown before it starts (measured at ~16s a figure),
+live progress, and cancel. This is finally the feature that justifies consuming the NDJSON
+progress stream the companion has served since ADR-020 and nothing has ever read (ADR-037).
 
-**Exit criteria:** a question whose answer lives in a figure retrieves that figure, cites it
-by page, and is answered from what the figure actually shows.
+**Exit criteria:** a 50-figure collection can be described in one pass, cancelled safely, and
+resumed without repeating work.
 
 ### Phase 16 — Citations & reference managers
 

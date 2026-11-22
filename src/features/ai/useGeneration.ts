@@ -26,17 +26,25 @@
  * stage is purely additive: providers that are disabled, unbound, slow, or
  * failing contribute nothing and generation proceeds unchanged.
  */
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useAppToasts } from '../../components/toaster';
 import { getServices } from '../../app/services';
 import type { GenerationOutcome, GenerationStats, PromptContextVar } from '../../types/domain';
 import { OfficeError, StreamError, toAppError } from '../../types/errors';
+import { markdownToPlainText } from '../../utils/markdown';
 import { toContextExcerpt, useHistoryStore } from '../history';
-import { assertRequiredContext, neededVars, requiredVars, type PromptVars } from '../prompts';
+import {
+  applyTemplate,
+  assertRequiredContext,
+  neededVars,
+  requiredVars,
+  type PromptVars,
+} from '../prompts';
 import { useSettingsStore } from '../settings';
 import { useKnowledgeBaseStore } from '../knowledgebase';
 import { assembleContextText, collectSources, runContextProviders } from './context/provider';
 import { allocateBudget, describeBudget } from './context/budget';
+import { MAX_RUN_FIGURES, fetchRunFigures } from './context/figures';
 import { useCalibrationStore } from './calibration.store';
 import { createKnowledgeBaseProvider } from './context/knowledgeBaseProvider';
 import { buildChatRequest, type GenerationInput, type RetrievedContext } from './request';
@@ -62,19 +70,32 @@ async function captureVars(needed: Set<PromptContextVar>, draft: string): Promis
   return vars;
 }
 
+/**
+ * Module-scoped lifecycle (same one-store, one-controller rule as
+ * `literature/searchRun.ts`): switching views unmounts `ChatView`, so holding
+ * these in hook `useRef`s stranded Stop/Esc/Retry and let "New prompt" reset
+ * the store while leaving the Ollama stream running in the background.
+ */
+let activeController: AbortController | null = null;
+let streamOwner: AbortController | null = null;
+let lastInput: GenerationInput | null = null;
+
+/** Aborts any in-flight generation (context retrieval, figures, or chat stream). */
+export function abortActiveGeneration(): void {
+  activeController?.abort();
+  activeController = null;
+}
+
 export function useGeneration(): UseGenerationResult {
   const toasts = useAppToasts();
   const status = useStreamStore((state) => state.status);
   const isActive = status === 'connecting' || status === 'streaming';
 
-  const controllerRef = useRef<AbortController | null>(null);
-  const lastInputRef = useRef<GenerationInput | null>(null);
-
   const generate = useCallback(
     async (input: GenerationInput): Promise<void> => {
       const stream = useStreamStore.getState();
       if (stream.status === 'connecting' || stream.status === 'streaming') return;
-      lastInputRef.current = input;
+      lastInput = input;
 
       // Requirement: a prompt to send (free mode always; templates that use {{input}}).
       const needsInput = requiredVars(input.template, input.contextSource).includes('input');
@@ -109,12 +130,19 @@ export function useGeneration(): UseGenerationResult {
        * time it reaches here, `input.model` IS the model that will answer —
        * history, calibration, and the budget all follow from that one fact.
        */
-      const imageCount = input.images?.length ?? 0;
+      const attachedImages = input.images?.length ?? 0;
 
       // §16 pipeline: gather optional extra context (RAG) before building the
-      // request. Bounded by its own signal so a slow companion can't stall the
-      // run, and entirely non-fatal.
-      const contextController = new AbortController();
+      // request. Shares the run's AbortController so Stop or "New prompt"
+      // cancels slow companion requests as well as the chat stream.
+      abortActiveGeneration();
+      const controller = new AbortController();
+      activeController = controller;
+      const isAborted = (): boolean => controller.signal.aborted;
+      const releaseController = (): void => {
+        if (activeController === controller) activeController = null;
+      };
+
       const providers = [
         createKnowledgeBaseProvider({
           enabled: settings.kbEnabled,
@@ -124,8 +152,13 @@ export function useGeneration(): UseGenerationResult {
       const blocks = await runContextProviders(providers, {
         query: input.draft,
         vars,
-        signal: contextController.signal,
+        signal: controller.signal,
       });
+      if (isAborted()) {
+        releaseController();
+        return;
+      }
+
       // Decide what actually fits before building the request (ADR-025).
       // `num_ctx` covers prompt *and* reply, and an over-long prompt is trimmed
       // from the front by Ollama without notice, so this is measured here
@@ -133,25 +166,75 @@ export function useGeneration(): UseGenerationResult {
       const charsPerToken = useCalibrationStore.getState().ratioFor(input.model);
       const documentContext =
         input.contextSource === 'none' ? null : (vars[input.contextSource] ?? null);
+      const nonDocVars: PromptVars =
+        input.contextSource === 'none' ? vars : { ...vars, [input.contextSource]: '' };
+      const baseInstruction =
+        input.template === null
+          ? input.draft
+          : [
+              applyTemplate(input.template.system, nonDocVars).trim(),
+              applyTemplate(input.template.user, nonDocVars),
+            ]
+              .filter((part) => part !== '')
+              .join('\n\n');
+      const priorBlock =
+        input.priorResult === undefined || input.priorResult.trim() === ''
+          ? ''
+          : `\n\n--- previous result ---\n${input.priorResult.trim()}`;
+      const instruction = `${baseInstruction}${priorBlock}`;
+
       // Captured here, where the text is still in hand, and truncated before it
       // reaches storage — history is capped at 200 records in browser storage,
       // and a whole-document capture could evict the rest on its own.
       const excerpt = documentContext === null ? null : toContextExcerpt(documentContext);
+      /*
+       * Figures are charged to the budget before they are fetched.
+       *
+       * They cannot be fetched first — budgeting decides which chunks survive,
+       * and a figure belonging to a trimmed chunk must not be sent. So the
+       * count is an upper bound taken from the retrieved chunks, capped at
+       * MAX_RUN_FIGURES. Over-reserving costs at most one excerpt;
+       * under-reserving means Ollama silently trims the prompt's front, which
+       * is the failure ADR-025 exists to prevent.
+       */
+      const canSeeFigures = input.visionModel !== undefined && input.visionModel !== null;
+      const figuresInPlay = !canSeeFigures
+        ? 0
+        : Math.min(
+            MAX_RUN_FIGURES,
+            blocks.reduce(
+              (sum, block) => sum + block.sources.filter((s) => s.figure !== undefined).length,
+              0,
+            ),
+          );
+
       const budget = allocateBudget({
         contextLength: settings.contextLength,
         reservePct: settings.responseReservePct,
-        instruction: input.draft,
+        instruction,
         documentContext,
         blocks,
         charsPerToken,
-        imageCount,
+        imageCount: attachedImages + figuresInPlay,
       });
 
       if (budget.overflow) {
+        releaseController();
         // Only the instruction is left and it still does not fit; sending it
         // would silently lose the very thing the user asked about.
         toasts.error(describeBudget(budget) ?? 'This prompt is too long for the context window.');
         useStreamStore.getState().reset();
+        return;
+      }
+
+      // Fetched here — after budgeting fixed which chunks survive, before the
+      // request is built from them.
+      const sources = collectSources(budget.blocks);
+      const runFigures = !canSeeFigures
+        ? []
+        : await fetchRunFigures(sources, input.visionModel ?? null, controller.signal);
+      if (isAborted()) {
+        releaseController();
         return;
       }
 
@@ -163,7 +246,9 @@ export function useGeneration(): UseGenerationResult {
         budget.blocks.length === 0 ? null : { text: assembleContextText(budget.blocks) };
 
       const request = buildChatRequest(
-        input,
+        runFigures.length === 0
+          ? input
+          : { ...input, images: [...(input.images ?? []), ...runFigures.map((f) => f.dataBase64)] },
         budgetedVars,
         {
           temperature: settings.temperature,
@@ -176,19 +261,26 @@ export function useGeneration(): UseGenerationResult {
         retrieved,
       );
 
-      const sources = collectSources(budget.blocks);
-      const controller = new AbortController();
-      controllerRef.current = controller;
+      streamOwner = controller;
       useStreamStore.getState().start({
         model: input.model,
         promptId: input.template?.id ?? null,
         sources,
         budget,
       });
+      const wasReset = (): boolean =>
+        streamOwner !== controller || useStreamStore.getState().status === 'idle';
 
       // rAF token batching: many NDJSON chunks per frame become one append.
       let pendingTokens = '';
       let frameHandle: number | null = null;
+      const cancelFrame = (): void => {
+        if (frameHandle !== null) {
+          window.cancelAnimationFrame(frameHandle);
+          frameHandle = null;
+        }
+        pendingTokens = '';
+      };
       const flushTokens = (): void => {
         if (frameHandle !== null) {
           window.cancelAnimationFrame(frameHandle);
@@ -205,7 +297,7 @@ export function useGeneration(): UseGenerationResult {
           frameHandle = null;
           const batch = pendingTokens;
           pendingTokens = '';
-          useStreamStore.getState().appendToken(batch);
+          if (!wasReset()) useStreamStore.getState().appendToken(batch);
         });
       };
 
@@ -213,12 +305,15 @@ export function useGeneration(): UseGenerationResult {
       // One run, one record — including cancelled and failed ones, whose
       // partial text is worth keeping and whose outcome explains it.
       let finalized = false;
-      const finalize = (stats: GenerationStats | null, outcome: GenerationOutcome): void => {
-        if (finalized) return;
+      const finalize = (
+        stats: GenerationStats | null,
+        outcome: GenerationOutcome,
+      ): string | null => {
+        if (finalized) return null;
         finalized = true;
         const text = useStreamStore.getState().text;
-        if (text === '' && stats === null && outcome === 'completed') return;
-        useHistoryStore.getState().addRecord({
+        if (text === '' && stats === null && outcome === 'completed') return null;
+        return useHistoryStore.getState().addRecord({
           prompt: input.draft,
           response: text,
           model: input.model,
@@ -249,7 +344,17 @@ export function useGeneration(): UseGenerationResult {
           }
         }
       } catch (cause) {
+        releaseController();
+        if (wasReset()) {
+          cancelFrame();
+          return;
+        }
         flushTokens();
+        if (isAborted()) {
+          useStreamStore.getState().cancel();
+          finalize(null, 'cancelled');
+          return;
+        }
         const error = toAppError(
           cause,
           (c) =>
@@ -261,14 +366,17 @@ export function useGeneration(): UseGenerationResult {
             ),
         );
         useStreamStore.getState().fail(error);
-        finalize(null, controller.signal.aborted ? 'cancelled' : 'error');
-        controllerRef.current = null;
+        finalize(null, 'error');
         return;
       }
-      controllerRef.current = null;
+      releaseController();
+      if (wasReset()) {
+        cancelFrame();
+        return;
+      }
       flushTokens();
 
-      if (doneStats !== null) {
+      if (doneStats !== null && !isAborted()) {
         useStreamStore.getState().complete(doneStats);
         // The only exact prompt size available anywhere: fold it back into the
         // per-model estimate so future budgets get more accurate (ADR-025).
@@ -277,7 +385,7 @@ export function useGeneration(): UseGenerationResult {
           request.messages.reduce((sum, message) => sum + message.content.length, 0),
           doneStats.promptEvalCount,
         );
-        finalize(doneStats, 'completed');
+        const recordId = finalize(doneStats, 'completed');
         // Attachments belong to the question that was just answered. Cleared
         // only on success, so a cancelled or failed run leaves them staged to
         // retry with rather than making the user re-attach.
@@ -304,9 +412,12 @@ export function useGeneration(): UseGenerationResult {
             });
           }
         }
-        if (settings.autoInsert) {
+        if (settings.autoInsert && !isAborted()) {
           try {
-            await services.office.insertAtCursor(text);
+            await services.office.insertAtCursor(markdownToPlainText(text));
+            if (recordId !== null) {
+              useHistoryStore.getState().markApplied(recordId, 'insert');
+            }
           } catch {
             toasts.error('Auto-insert failed — use the Insert button instead.');
           }
@@ -314,7 +425,7 @@ export function useGeneration(): UseGenerationResult {
         return;
       }
 
-      if (controller.signal.aborted) {
+      if (isAborted()) {
         // ADR-011: caller abort ends the generator silently — a normal stop.
         useStreamStore.getState().cancel();
         finalize(null, 'cancelled');
@@ -337,12 +448,11 @@ export function useGeneration(): UseGenerationResult {
   );
 
   const stop = useCallback((): void => {
-    controllerRef.current?.abort();
+    abortActiveGeneration();
   }, []);
 
   const retry = useCallback((): void => {
-    const last = lastInputRef.current;
-    if (last !== null) void generate(last);
+    if (lastInput !== null) void generate(lastInput);
   }, [generate]);
 
   return useMemo(() => ({ generate, stop, retry, isActive }), [generate, stop, retry, isActive]);

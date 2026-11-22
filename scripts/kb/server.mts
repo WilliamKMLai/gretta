@@ -41,7 +41,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 import type { CollectionConfig, QueryDefaults } from '../../src/types/knowledgebase';
-import { applyCors, readJsonBody, sendJson } from './http.mts';
+import {
+  HttpError,
+  applyCors,
+  parseAllowedOrigins,
+  readJsonBody,
+  safeDecodeParam,
+  sendJson,
+} from './http.mts';
 import { isPickFolderSupported, pickFolder } from './pick-folder.mts';
 import { encodeProgress } from './progress.mts';
 import { CollectionRegistry } from './registry.mts';
@@ -54,10 +61,12 @@ function env(name: string, fallback: string): string {
 }
 
 const VERSION = '1.0.0';
+const HOST = env('GRETTA_KB_HOST', '127.0.0.1');
 const PORT = Number(env('GRETTA_KB_PORT', '11436'));
 const DATA_DIR = env('GRETTA_KB_DIR', join(homedir(), '.gretta'));
 const OLLAMA_URL = env('GRETTA_OLLAMA_URL', 'http://127.0.0.1:11434');
 const CERT_DIR = env('GRETTA_KB_CERT_DIR', join(homedir(), '.office-addin-dev-certs'));
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.GRETTA_KB_ORIGINS);
 const INSECURE = process.env.GRETTA_KB_INSECURE === '1';
 /** Logs each retrieval so "did the pane actually ask for chunks?" is answerable. */
 const VERBOSE = process.env.GRETTA_KB_VERBOSE === '1';
@@ -111,12 +120,15 @@ const store = new SqliteStore(provisionDataDir());
 const registry = new CollectionRegistry(store, defaults, OLLAMA_URL);
 
 /** Streams a collection's NDJSON progress until the client disconnects. */
-function streamStatus(id: string, res: ServerResponse): void {
+function streamStatus(id: string, req: IncomingMessage, res: ServerResponse): void {
   const indexer = registry.get(id);
   if (indexer === null) {
     sendJson(res, 404, { error: `no collection "${id}"` });
     return;
   }
+  req.setTimeout(0);
+  res.setTimeout(0);
+  res.socket?.setTimeout(0);
   res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' });
   res.write(encodeProgress({ type: 'phase', phase: indexer.status().phase }));
   const unsubscribe = registry.onProgress(id, (event) => {
@@ -125,7 +137,7 @@ function streamStatus(id: string, res: ServerResponse): void {
   res.on('close', () => unsubscribe?.());
 }
 
-function parseConfig(body: unknown): CollectionConfig | string {
+function parseConfig(body: Record<string, unknown>): CollectionConfig | string {
   const raw = body as Partial<CollectionConfig> & { folder?: string };
   const id = typeof raw.id === 'string' && raw.id.trim() !== '' ? raw.id.trim() : null;
   if (id === null) return '"id" (string) is required';
@@ -142,6 +154,9 @@ function parseConfig(body: unknown): CollectionConfig | string {
       typeof raw.embeddingModel === 'string' && raw.embeddingModel !== ''
         ? raw.embeddingModel
         : env('GRETTA_KB_EMBED_MODEL', 'nomic-embed-text:latest'),
+    // Absent reads as off: an older pane never sends it, and figures must
+    // never switch themselves on (ADR-036).
+    indexFigures: raw.indexFigures === true,
   };
 }
 
@@ -150,7 +165,10 @@ const STREAM_RE = /^\/collections\/([^/]+)\/status\/stream$/u;
 const REINDEX_RE = /^\/collections\/([^/]+)\/reindex$/u;
 
 async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  applyCors(req, res);
+  if (!applyCors(req, res, ALLOWED_ORIGINS)) {
+    sendJson(res, 403, { error: 'origin not allowed' });
+    return;
+  }
   const method = req.method ?? 'GET';
   const path = (req.url ?? '/').split('?')[0] ?? '/';
 
@@ -173,6 +191,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       // button before anyone clicks it, and a button that opens nothing is
       // worse than no button (ADR-033).
       pickFolder: isPickFolderSupported(),
+      // This build can render and describe figures (ADR-036). Advertised for
+      // the same reason as pickFolder: the pane decides whether to offer the
+      // per-collection switch before anyone touches it, and an older
+      // companion that omits the field reads as "no figures".
+      describeFigures: true,
     });
     return;
   }
@@ -197,24 +220,26 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
   const reindex = REINDEX_RE.exec(path);
   if (method === 'POST' && reindex !== null) {
-    const indexer = registry.get(reindex[1] ?? '');
+    const indexer = registry.get(safeDecodeParam(reindex[1] ?? ''));
     if (indexer === null) {
       sendJson(res, 404, { error: 'no such collection' });
       return;
     }
-    const body = (await readJsonBody(req, MAX_BODY_BYTES)) as { full?: unknown };
-    void indexer.reindex(body.full === true);
+    const body = await readJsonBody(req, MAX_BODY_BYTES);
+    indexer.reindex(body.full === true).catch((error: unknown) => {
+      console.error(`[gretta-kb] Reindex failed: ${String(error)}`);
+    });
     sendJson(res, 202, indexer.status());
     return;
   }
   const stream = STREAM_RE.exec(path);
   if (method === 'GET' && stream !== null) {
-    streamStatus(stream[1] ?? '', res);
+    streamStatus(safeDecodeParam(stream[1] ?? ''), req, res);
     return;
   }
   const collection = COLLECTION_RE.exec(path);
   if (method === 'DELETE' && collection !== null) {
-    const ok = registry.delete(collection[1] ?? '');
+    const ok = registry.delete(safeDecodeParam(collection[1] ?? ''));
     sendJson(res, ok ? 200 : 404, ok ? { deleted: true } : { error: 'no such collection' });
     return;
   }
@@ -228,12 +253,33 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     sendJson(res, 200, await pickFolder());
     return;
   }
+  /*
+   * `GET /figures/:collectionId/:figureId` — pixels, rendered on first ask.
+   *
+   * JSON rather than `image/png`, for consistency with every other endpoint
+   * (all Zod-validated on the pane side) and because the pane needs base64
+   * anyway to hand the figure to Ollama. Serving raw bytes would mean
+   * converting them straight back.
+   *
+   * The vision model rides in as a query parameter: the companion has no
+   * settings of its own, and which model can see is the pane's knowledge.
+   */
+  const figureMatch = /^\/figures\/([^/]+)\/([^/]+)$/u.exec(path);
+  if (method === 'GET' && figureMatch !== null) {
+    const collectionId = safeDecodeParam(figureMatch[1] ?? '');
+    const figureId = safeDecodeParam(figureMatch[2] ?? '');
+    const query = (req.url ?? '').split('?')[1] ?? '';
+    const visionModel = new URLSearchParams(query).get('visionModel') ?? '';
+    const image = await registry.figureImage(collectionId, figureId, visionModel);
+    if (image === null) {
+      sendJson(res, 404, { error: 'no such figure, or it could not be rendered' });
+      return;
+    }
+    sendJson(res, 200, image);
+    return;
+  }
   if (method === 'POST' && path === '/query') {
-    const body = (await readJsonBody(req, MAX_BODY_BYTES)) as {
-      query?: unknown;
-      collectionIds?: unknown;
-      k?: unknown;
-    };
+    const body = await readJsonBody(req, MAX_BODY_BYTES);
     if (typeof body.query !== 'string') {
       sendJson(res, 400, { error: '"query" (string) is required' });
       return;
@@ -241,7 +287,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const ids = Array.isArray(body.collectionIds)
       ? body.collectionIds.filter((id): id is string => typeof id === 'string')
       : [];
-    const k = typeof body.k === 'number' ? body.k : undefined;
+    const k = typeof body.k === 'number' && Number.isFinite(body.k) ? body.k : undefined;
     const chunks = await registry.query(ids, body.query, k);
     if (VERBOSE) {
       const preview = body.query.replace(/\s+/gu, ' ').slice(0, 60);
@@ -261,9 +307,16 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 
 const handler = (req: IncomingMessage, res: ServerResponse): void => {
   route(req, res).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : 'internal error';
-    if (!res.headersSent) sendJson(res, 500, { error: `gretta-kb: ${message}` });
-    else res.end();
+    if (!res.headersSent) {
+      if (error instanceof HttpError) {
+        sendJson(res, error.status, { error: error.message });
+        return;
+      }
+      const message = error instanceof Error ? error.message : 'internal error';
+      sendJson(res, 500, { error: `gretta-kb: ${message}` });
+    } else {
+      res.end();
+    }
   });
 };
 
@@ -291,9 +344,10 @@ function shutdown(): void {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   const scheme = INSECURE ? 'http' : 'https';
-  console.log(`[gretta-kb] ${scheme}://localhost:${String(PORT)}  (Ollama: ${OLLAMA_URL})`);
+  const displayHost = HOST === '127.0.0.1' ? 'localhost' : HOST;
+  console.log(`[gretta-kb] ${scheme}://${displayHost}:${String(PORT)}  (Ollama: ${OLLAMA_URL})`);
   const collections = registry.list();
   if (collections.length === 0) {
     console.log('[gretta-kb] No collections yet — add one in the pane’s Knowledge base panel.');

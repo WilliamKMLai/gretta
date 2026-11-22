@@ -54,9 +54,25 @@ const green = (text) => paint('32', text);
 const red = (text) => paint('31', text);
 const yellow = (text) => paint('33', text);
 
+const children = [];
+let shuttingDown = false;
+
+function killChildGroup(child) {
+  if (child.exitCode !== null) return;
+  try {
+    if (child.pid) process.kill(-child.pid, 'SIGTERM');
+    else child.kill('SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+}
+
 function fail(message, hint) {
   console.error(`\n${red('✖ dev:mac')} ${message}`);
   if (hint) console.error(`  ${dim(hint)}`);
+  for (const child of children) {
+    killChildGroup(child);
+  }
   process.exit(1);
 }
 
@@ -82,13 +98,18 @@ function sideload() {
   console.log(`${green('✓')} Sideloaded manifest → ${dim(wefDir)}`);
 }
 
-// ── step 2: run dev + proxy as children, streaming prefixed logs ──────────────
-/** A supervised child process, its output line-prefixed with a colored label. */
+// ── step 2: run dev + proxy + kb as children, streaming prefixed logs ────────
+/** A supervised child process group, its output line-prefixed with a colored label. */
 function launch(label, colorFn, command, args) {
   const child = spawn(command, args, {
     cwd: repoRoot,
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
+  child.on('error', (err) => {
+    if (shuttingDown) return;
+    fail(`Failed to start ${label}: ${err.message}`, 'Ensure pnpm is installed and on PATH.');
   });
   const prefix = colorFn(`[${label}]`);
   const forward = (stream, sink) => {
@@ -109,15 +130,12 @@ function launch(label, colorFn, command, args) {
   return child;
 }
 
-const children = [];
-let shuttingDown = false;
-
 function shutdown(code) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${dim('› Shutting down dev server, proxy, and knowledge-base companion…')}`);
   for (const child of children) {
-    if (child.exitCode === null) child.kill('SIGTERM');
+    killChildGroup(child);
   }
   // Give children a moment to exit cleanly, then force the process to end.
   setTimeout(() => {
@@ -125,7 +143,7 @@ function shutdown(code) {
   }, 400);
 }
 
-// If either server dies on its own, take the whole thing down — a half-running
+// If any service dies on its own, take the whole thing down — a half-running
 // setup (dev up, proxy dead) is the confusing state this script exists to avoid.
 function superviseExit(label) {
   return (code) => {
@@ -155,6 +173,9 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   shutdown(0);
 });
+process.on('SIGHUP', () => {
+  shutdown(0);
+});
 
 // The one manual step, made impossible to miss.
 const banner = [
@@ -162,10 +183,10 @@ const banner = [
   yellow('┌───────────────────────────────────────────────────────────────┐'),
   `${yellow('│')}  ${bold('One step left: restart Word.')}                                 ${yellow('│')}`,
   `${yellow('│')}  ${dim('Word only reads the add-in folder at launch, so quit Word')}    ${yellow('│')}`,
-  `${yellow('│')}  ${dim('completely (⌘Q) and reopen it. Then: Home → Add-ins →')}       ${yellow('│')}`,
-  `${yellow('│')}  ${dim('GRETTA. Set the Ollama URL to')} ${cyan('https://localhost:11435')}${yellow('     │')}`,
+  `${yellow('│')}  ${dim('completely (⌘Q) and reopen it. Then: Home → Add-ins →')}        ${yellow('│')}`,
+  `${yellow('│')}  ${dim('GRETTA. Proxy')} ${cyan('https://localhost:11435')} ${dim('is auto-detected.')}      ${yellow('│')}`,
   `${yellow('└───────────────────────────────────────────────────────────────┘')}`,
-  dim('  Both servers are running above. Press Ctrl+C to stop them.'),
+  dim('  Dev server, proxy, and KB companion are running. Press Ctrl+C to stop.'),
   '',
 ];
 // Print after a short delay so it lands below the servers' own startup noise.

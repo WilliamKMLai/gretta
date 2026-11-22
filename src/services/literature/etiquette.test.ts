@@ -3,10 +3,11 @@
  * speed up on evidence" — a client that starts fast and backs off after a 429
  * has already been impolite.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   FALLBACK_INTERVAL_MS,
   MAX_BACKOFF_MS,
+  abortableSleep,
   backoffMs,
   buildUserAgent,
   minIntervalMs,
@@ -103,5 +104,45 @@ describe('withContact', () => {
 
   it('starts a query string when there is none', () => {
     expect(withContact('https://api.crossref.org/works', 'sci@example.org')).toContain('?mailto=');
+  });
+});
+
+describe('abortableSleep', () => {
+  it('resolves immediately for a non-positive delay', async () => {
+    await expect(abortableSleep(0)).resolves.toBeUndefined();
+    await expect(abortableSleep(-10)).resolves.toBeUndefined();
+  });
+
+  it('resolves once the delay elapses when not aborted', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const pending = abortableSleep(50, controller.signal);
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(pending).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(abortableSleep(5_000, controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+
+  it('interrupts an in-flight backoff as soon as the signal aborts', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const pending = abortableSleep(30_000, controller.signal);
+      const expectation = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      controller.abort();
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

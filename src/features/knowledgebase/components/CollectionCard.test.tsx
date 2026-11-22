@@ -23,6 +23,9 @@ const baseCollection: CollectionStatus = {
   skipped: [],
   lastIndexedAt: '2026-07-22T00:00:00.000Z',
   message: null,
+  indexFigures: false,
+  figureCount: 0,
+  describedFigureCount: 0,
 };
 
 function wrap(children: ReactNode): ReactElement {
@@ -40,7 +43,7 @@ function renderCard(collection: CollectionStatus): void {
         onToggleBound={vi.fn()}
         onReindex={vi.fn()}
         onDelete={vi.fn()}
-        onSave={vi.fn()}
+        onSave={vi.fn(() => Promise.resolve(true))}
       />,
     ),
   );

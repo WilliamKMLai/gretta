@@ -15,13 +15,16 @@ import {
   MessageBar,
   MessageBarBody,
   Select,
+  Switch,
   Textarea,
   makeStyles,
   tokens,
 } from '@fluentui/react-components';
 import { CheckmarkRegular, DismissRegular } from '@fluentui/react-icons';
 import type { CollectionConfig, CollectionStatus } from '../../../types/knowledgebase';
+import { describeFolderProblem } from '../embeddingModels';
 import { FolderPickerButton } from './FolderPickerButton';
+import { useKbHealth } from '../../../hooks/useKbQueries';
 
 const useStyles = makeStyles({
   form: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS },
@@ -47,13 +50,22 @@ export function CollectionEditor({
   const [name, setName] = useState(collection.name);
   const [folders, setFolders] = useState(collection.folders.join('\n'));
   const [model, setModel] = useState(collection.embeddingModel);
+  const [indexFigures, setIndexFigures] = useState(collection.indexFigures);
+  // Offered only when the companion can actually render figures (ADR-036),
+  // the same capability gate FolderPickerButton uses.
+  const canDescribe = useKbHealth(true).data?.describeFigures === true;
 
   const parsedFolders = folders
     .split('\n')
     .map((folder) => folder.trim())
     .filter((folder) => folder !== '');
-  const valid = name.trim() !== '' && parsedFolders.length > 0;
+  const folderProblem =
+    parsedFolders.length === 0
+      ? describeFolderProblem('')
+      : (parsedFolders.map(describeFolderProblem).find((problem) => problem !== null) ?? null);
+  const valid = name.trim() !== '' && folderProblem === null;
   const modelChanged = model !== collection.embeddingModel;
+  const figuresChanged = indexFigures !== collection.indexFigures;
 
   return (
     <div className={styles.form}>
@@ -65,7 +77,13 @@ export function CollectionEditor({
           }}
         />
       </Field>
-      <Field label="Folders" required hint="One absolute path per line.">
+      <Field
+        label="Folders"
+        required
+        hint="One absolute path per line."
+        validationState={folderProblem === null ? 'none' : 'warning'}
+        validationMessage={folderProblem}
+      >
         <Textarea
           value={folders}
           rows={2}
@@ -115,6 +133,33 @@ export function CollectionEditor({
           </MessageBarBody>
         </MessageBar>
       ) : null}
+      {figuresChanged ? (
+        <MessageBar intent="warning">
+          <MessageBarBody>
+            Changing this re-indexes the collection from scratch — figure captions are stored as
+            their own excerpts, so turning it on or off changes which excerpts exist.
+          </MessageBarBody>
+        </MessageBar>
+      ) : null}
+      {canDescribe ? (
+        <Field
+          label="Index figures"
+          hint={
+            indexFigures
+              ? 'Figures in PDFs are found by their captions and can be looked at when answering. Each one is rendered and described the first time it comes up.'
+              : 'Find figures in PDFs so GRETTA can search them and look at them when answering. Needs a vision model.'
+          }
+        >
+          <Switch
+            checked={indexFigures}
+            label={indexFigures ? 'On' : 'Off'}
+            onChange={(_, data) => {
+              setIndexFigures(data.checked);
+            }}
+          />
+        </Field>
+      ) : null}
+
       <div className={styles.actions}>
         <Button size="small" icon={<DismissRegular />} onClick={onCancel}>
           Cancel
@@ -131,6 +176,7 @@ export function CollectionEditor({
               name: name.trim(),
               folders: parsedFolders,
               embeddingModel: model,
+              indexFigures,
             });
           }}
         >

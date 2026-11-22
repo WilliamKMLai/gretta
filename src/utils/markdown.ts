@@ -31,22 +31,52 @@ export type MarkdownBlock =
   | { type: 'quote'; inline: InlineNode[] }
   | { type: 'rule' };
 
-const INLINE_PATTERN =
-  /(\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+\))/u;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+function hasAdjacentWordChar(text: string, start: number, end: number): boolean {
+  if (start > 0) {
+    const before = Array.from(text.slice(Math.max(0, start - 2), start)).at(-1);
+    if (before !== undefined && WORD_CHAR.test(before)) return true;
+  }
+  if (end < text.length) {
+    const after = Array.from(text.slice(end, end + 2))[0];
+    if (after !== undefined && WORD_CHAR.test(after)) return true;
+  }
+  return false;
+}
 
 /** Splits one line of text into styled spans. Unmatched text passes through. */
 export function parseInline(text: string): InlineNode[] {
   const nodes: InlineNode[] = [];
-  let rest = text;
+  const pattern =
+    /(\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|\[[^\]\n]+\]\((?:\([^()\s]*\)|[^()\s])+\))/gu;
+  let textStart = 0;
 
-  while (rest !== '') {
-    const match = INLINE_PATTERN.exec(rest);
-    if (match?.index === undefined) {
-      nodes.push({ type: 'text', value: rest });
+  for (;;) {
+    const match = pattern.exec(text);
+    if (match === null) {
+      if (textStart < text.length) {
+        nodes.push({ type: 'text', value: text.slice(textStart) });
+      }
       break;
     }
-    if (match.index > 0) nodes.push({ type: 'text', value: rest.slice(0, match.index) });
+
     const token = match[0];
+    const start = match.index;
+    const end = start + token.length;
+
+    // Intraword underscores (`alpha_1 and alpha_2`, `top_p`, `foo__bar__baz`)
+    // are identifiers or subscripts in technical prose, not emphasis.
+    if (token.startsWith('_') && hasAdjacentWordChar(text, start, end)) {
+      let next = start + 1;
+      while (next < text.length && text[next] === '_') next += 1;
+      pattern.lastIndex = next;
+      continue;
+    }
+
+    if (start > textStart) {
+      nodes.push({ type: 'text', value: text.slice(textStart, start) });
+    }
 
     if (token.startsWith('**') || token.startsWith('__')) {
       nodes.push({ type: 'strong', value: token.slice(2, -2) });
@@ -62,8 +92,11 @@ export function parseInline(text: string): InlineNode[] {
     } else {
       nodes.push({ type: 'em', value: token.slice(1, -1) });
     }
-    rest = rest.slice(match.index + token.length);
+
+    textStart = end;
+    pattern.lastIndex = end;
   }
+
   return nodes.filter((node) => node.type !== 'text' || node.value !== '');
 }
 

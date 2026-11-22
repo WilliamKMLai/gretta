@@ -216,24 +216,29 @@ Ollama proxy does. If you hit certificate trouble, run `pnpm certs:install`.
 
 ## Environment variables
 
-| Variable                | Default                  | Purpose                                            |
-| ----------------------- | ------------------------ | -------------------------------------------------- |
-| `GRETTA_KB_PORT`        | `11436`                  | Listen port                                        |
-| `GRETTA_KB_DIR`         | `~/.gretta`              | Where the index database lives                     |
-| `GRETTA_KB_EMBED_MODEL` | `nomic-embed-text`       | Model for new collections                          |
-| `GRETTA_OLLAMA_URL`     | `http://127.0.0.1:11434` | Ollama endpoint used for embeddings                |
-| `GRETTA_KB_TOP_K`       | `5`                      | Excerpts retrieved per generation                  |
-| `GRETTA_KB_MIN_SCORE`   | `0.2`                    | Minimum similarity to include                      |
-| `GRETTA_KB_INSECURE`    | unset                    | `1` serves plain HTTP on loopback                  |
-| `GRETTA_KB_FAKE_EMBED`  | unset                    | `1` uses offline deterministic vectors (testing)   |
-| `GRETTA_KB_VERBOSE`     | unset                    | `1` logs each retrieval query and what it returned |
+| Variable                  | Default                     | Purpose                                            |
+| ------------------------- | --------------------------- | -------------------------------------------------- |
+| `GRETTA_KB_HOST`          | `127.0.0.1`                 | Bind address (loopback by default)                 |
+| `GRETTA_KB_PORT`          | `11436`                     | Listen port                                        |
+| `GRETTA_KB_ORIGINS`       | unset                       | Extra comma-separated allowed CORS origins         |
+| `GRETTA_KB_DIR`           | `~/.gretta`                 | Where the index database lives                     |
+| `GRETTA_KB_EMBED_MODEL`   | `nomic-embed-text:latest`   | Model for new collections                          |
+| `GRETTA_KB_CERT_DIR`      | `~/.office-addin-dev-certs` | Directory for fallback TLS certificate files       |
+| `GRETTA_OLLAMA_URL`       | `http://127.0.0.1:11434`    | Ollama endpoint used for embeddings                |
+| `GRETTA_KB_TOP_K`         | `5`                         | Excerpts retrieved per generation                  |
+| `GRETTA_KB_MIN_SCORE`     | `0.2`                       | Minimum similarity to include                      |
+| `GRETTA_KB_INSECURE`      | unset                       | `1` serves plain HTTP on loopback                  |
+| `GRETTA_KB_FAKE_EMBED`    | unset                       | `1` uses offline deterministic vectors (testing)   |
+| `GRETTA_KB_FAKE_DESCRIBE` | unset                       | `1` uses offline figure descriptions (testing)     |
+| `GRETTA_KB_VERBOSE`       | unset                       | `1` logs each retrieval query and what it returned |
 
 ## Privacy
 
-The companion listens on loopback only. Folder paths, file contents, and embeddings never
-leave your computer, and the only thing stored in your document is the list of collection
-ids it's bound to. Retrieved text is treated exactly like model output — data, never
-instructions.
+The companion listens on loopback only (`127.0.0.1` by default) and rejects cross-origin browser
+requests unless the origin is local (`localhost`, `127.0.0.1`, `[::1]`) or listed in
+`GRETTA_KB_ORIGINS`. Folder paths, file contents, and embeddings never leave your computer, and
+the only thing stored in your document is the list of collection ids it's bound to. Retrieved text
+is treated exactly like model output — data, never instructions.
 
 The companion reads only the folders you have explicitly bound to a collection. There is no
 endpoint that lists or browses your filesystem, and **Choose folder…** does not add one: it

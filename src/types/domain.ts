@@ -257,19 +257,18 @@ export interface AppSettings extends GenerationOptions {
    */
   litMinVenueCitedness: number;
   /**
-   * How much a candidate's age-adjusted citation impact (OpenAlex
-   * `citedByPercentileYear`, when available) can nudge relevance ranking
-   * (ADR-029's amendment). 0 disables the nudge entirely — pure relevance, as
-   * before that amendment. Provisional and exposed for the same reason as
-   * `litMinVenueCitedness`: chosen without real result sets behind it.
+   * How much a candidate's log-scaled raw citation count (OpenAlex
+   * `citedByCount`, saturating at 200) boosts relevance ranking (ADR-029,
+   * fifth amendment; default 0.6). 0 disables the citation boost while keeping
+   * supplementary-type demotions in place.
    */
   litCitationImpactWeight: number;
 }
 
 /**
- * One switch per searchable source; all default to false. OpenAlex is
- * deliberately absent — it is enrichment, not a search source, and lives in
- * `litEnrichment`.
+ * One switch per searchable source (ADR-031); all default to false. Crossref is
+ * deliberately absent here — it is used for retraction verification
+ * (`litVerification`) and as the upstream index for bioRxiv/medRxiv.
  */
 export interface LiteratureSourceToggles {
   /** Primary. Free, no account, best abstract coverage of any source. */

@@ -1,11 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import process from 'node:process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CollectionConfig, QueryDefaults } from '../../src/types/knowledgebase';
 import { CollectionIndexer, KB_MAX_CHUNKS, capacityPct } from './index-store.mts';
 import { contentHash } from './store.sqlite.mts';
-import type { ChunkRow, SqliteStore } from './store.sqlite.mts';
+import type { ChunkRow, SqliteStore, StoredFigure } from './store.sqlite.mts';
 import { fingerprintMacroTable } from './tex/macros.mts';
 
 /**
@@ -22,7 +23,14 @@ import { fingerprintMacroTable } from './tex/macros.mts';
 const DEFAULTS: QueryDefaults = { topK: 8, minScore: 0 };
 
 function config(overrides: Partial<CollectionConfig> = {}): CollectionConfig {
-  return { id: 'a', name: 'A', folders: [], embeddingModel: 'm1', ...overrides };
+  return {
+    id: 'a',
+    name: 'A',
+    folders: [],
+    embeddingModel: 'm1',
+    indexFigures: false,
+    ...overrides,
+  };
 }
 
 function createFakeStore(options: { indexedSources?: string[]; fileHash?: string | null } = {}) {
@@ -39,6 +47,13 @@ function createFakeStore(options: { indexedSources?: string[]; fileHash?: string
     getTexMacroHash: vi.fn(() => null as string | null),
     setTexMacroHash: vi.fn(),
     chunkVectors: vi.fn(() => ({ matrix: new Float32Array(0), rowIds: [] as number[], dims: 0 })),
+    replaceFigures: vi.fn(),
+    figureCounts: vi.fn(() => ({ total: 0, described: 0 })),
+    getFigure: vi.fn((): StoredFigure | null => null),
+    saveFigureImage: vi.fn(),
+    saveFigureDescription: vi.fn(),
+    updateChunkForFigure: vi.fn(),
+    undescribedFigures: vi.fn(() => []),
     chunksByRowIds: vi.fn((rowIds: number[]): ChunkRow[] => {
       void rowIds;
       return [];
@@ -54,6 +69,7 @@ describe('CollectionIndexer query-matrix caching', () => {
   let dir: string | undefined;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
     dir = undefined;
@@ -237,6 +253,104 @@ describe('CollectionIndexer query-matrix caching', () => {
     expect(store.replaceFile).not.toHaveBeenCalled();
   });
 
+  it('defers setTexMacroHash when Ollama is unreachable so the next reindex retries .tex files', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    writeFileSync(
+      join(dir, 'main.tex'),
+      '\\newcommand{\\dsize}{42}\n\\begin{document}\nN=\\dsize{}.\n\\end{document}',
+    );
+    const store = createFakeStore({ fileHash: null });
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://127.0.0.1:11434',
+    );
+
+    await indexer.reindex();
+
+    expect(indexer.status().phase).toBe('ollama-unreachable');
+    expect(store.setTexMacroHash).not.toHaveBeenCalled();
+  });
+
+  it('cancelling mid-embed prevents store.replaceFile from writing orphaned chunks', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    writeFileSync(join(dir, 'doc.txt'), 'Hello world.');
+    const store = createFakeStore({ fileHash: null });
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://127.0.0.1:11434',
+    );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      indexer.cancel();
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ embeddings: [[1, 0]] }),
+      } as Response);
+    });
+
+    await indexer.reindex();
+
+    expect(store.replaceFile).not.toHaveBeenCalled();
+    expect(store.markIndexed).not.toHaveBeenCalled();
+  });
+
+  it('isolates an unreadable subfolder in scanAll() while indexing readable siblings', async () => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) return;
+    vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    const locked = join(dir, 'locked');
+    const readable = join(dir, 'readable');
+    mkdirSync(locked, { recursive: true });
+    mkdirSync(readable, { recursive: true });
+    writeFileSync(join(locked, 'secret.txt'), 'Hidden.');
+    writeFileSync(join(readable, 'ok.txt'), 'Visible.');
+    chmodSync(locked, 0o000);
+    try {
+      const store = createFakeStore({ fileHash: null });
+      const indexer = new CollectionIndexer(
+        config({ folders: [dir] }),
+        asStore(store),
+        DEFAULTS,
+        'http://x',
+      );
+
+      await indexer.reindex();
+
+      expect(indexer.status().phase).toBe('ready');
+      expect(indexer.status().skipped).toEqual([expect.objectContaining({ path: 'locked' })]);
+      expect(store.replaceFile).toHaveBeenCalledWith(
+        'a',
+        'readable/ok.txt',
+        expect.any(String),
+        expect.anything(),
+      );
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
+
+  it('transitions to phase "error" instead of rejecting on an unexpected store failure', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kb-index-'));
+    const store = createFakeStore();
+    store.indexedSources.mockImplementation(() => {
+      throw new Error('disk io error');
+    });
+    const indexer = new CollectionIndexer(
+      config({ folders: [dir] }),
+      asStore(store),
+      DEFAULTS,
+      'http://x',
+    );
+
+    await expect(indexer.reindex()).resolves.toBeUndefined();
+    expect(indexer.status().phase).toBe('error');
+    expect(indexer.status().message).toBe('disk io error');
+  });
+
   it('maps ranked matches back to RetrievedChunk, preserving score order', async () => {
     vi.stubEnv('GRETTA_KB_FAKE_EMBED', '1');
     const store = createFakeStore();
@@ -297,15 +411,16 @@ describe('CollectionIndexer query-embedding dedupe seam', () => {
     return store;
   }
 
-  it('exposes embeddingModel without touching the store (the registry grouping key)', () => {
+  it('exposes embeddingModel and folders without touching the store', () => {
     const store = createFakeStore();
     const indexer = new CollectionIndexer(
-      config({ embeddingModel: 'nomic-embed-text' }),
+      config({ embeddingModel: 'nomic-embed-text', folders: ['/refs/a', '/refs/b'] }),
       asStore(store),
       DEFAULTS,
       'http://x',
     );
     expect(indexer.embeddingModel).toBe('nomic-embed-text');
+    expect(indexer.folders).toEqual(['/refs/a', '/refs/b']);
     expect(store.counts).not.toHaveBeenCalled();
   });
 
@@ -412,5 +527,92 @@ describe('capacityPct and overCapacity', () => {
     const status = indexer.status();
     expect(status.chunkCount).toBe(KB_MAX_CHUNKS * 3);
     expect(status.overCapacity).toBe(true);
+  });
+});
+
+describe('CollectionIndexer on-demand figure description safety', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  function cachedStoredFigure(): StoredFigure {
+    return {
+      id: 'fig-1',
+      collectionId: 'a',
+      source: 'paper.pdf',
+      contentHash: 'h1',
+      page: 1,
+      bbox: '{"x0":0,"y0":0,"x1":100,"y1":100}',
+      caption: 'Figure 1. Dose curve.',
+      description: null,
+      mediaType: 'image/png',
+      width: 100,
+      height: 100,
+      bytes: Buffer.from('png'),
+      describedAt: null,
+    };
+  }
+
+  it('deduplicates concurrent detached describeFigure runs for the same figureId', async () => {
+    const store = createFakeStore();
+    store.getFigure.mockReturnValue(cachedStoredFigure());
+    const chatGate: { finish: ((res: Response) => void) | null } = { finish: null };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = typeof input === 'string' ? input : '';
+      if (url.endsWith('/api/chat')) {
+        return new Promise<Response>((resolve) => {
+          chatGate.finish = resolve;
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ embeddings: [[1, 0]] }),
+      } as Response);
+    });
+    const indexer = new CollectionIndexer(config(), asStore(store), DEFAULTS, 'http://x');
+
+    await indexer.figureImage('fig-1', 'qwen2.5vl:7b');
+    await indexer.figureImage('fig-1', 'qwen2.5vl:7b');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    if (chatGate.finish === null) throw new Error('expected /api/chat call');
+    chatGate.finish({
+      ok: true,
+      json: () => Promise.resolve({ message: { content: 'Axes show dose vs response.' } }),
+    } as Response);
+
+    await vi.waitFor(() => {
+      expect(store.updateChunkForFigure).toHaveBeenCalledTimes(1);
+    });
+    expect(store.saveFigureDescription).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards an in-flight figure description if cancel() runs before completion', async () => {
+    const store = createFakeStore();
+    store.getFigure.mockReturnValue(cachedStoredFigure());
+    const chatGate: { finish: ((res: Response) => void) | null } = { finish: null };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      return new Promise<Response>((resolve) => {
+        chatGate.finish = resolve;
+      });
+    });
+    const indexer = new CollectionIndexer(config(), asStore(store), DEFAULTS, 'http://x');
+
+    await indexer.figureImage('fig-1', 'qwen2.5vl:7b');
+    indexer.cancel();
+
+    if (chatGate.finish === null) throw new Error('expected /api/chat call');
+    chatGate.finish({
+      ok: true,
+      json: () => Promise.resolve({ message: { content: 'Stale description.' } }),
+    } as Response);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+
+    expect(store.saveFigureDescription).not.toHaveBeenCalled();
+    expect(store.updateChunkForFigure).not.toHaveBeenCalled();
   });
 });

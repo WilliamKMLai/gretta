@@ -21,10 +21,24 @@ import type {
   LiteratureSearchClient,
   UpdateLookupClient,
 } from './client.types';
-import { backoffMs, minIntervalMs, parseRateLimit, withContact } from './etiquette';
+import {
+  abortableSleep,
+  backoffMs,
+  minIntervalMs,
+  parseRateLimit,
+  throwIfAborted,
+  withContact,
+} from './etiquette';
 import { abstractToText, firstNonEmpty } from './jats';
 import { queryText, type ApprovedQuery } from './query';
-import { parseWorkList, toIsoDate, toUpdateType, toWorkType, type CrossrefWork } from './schemas';
+import {
+  parseNoticeList,
+  parseWorkList,
+  toIsoDate,
+  toUpdateType,
+  toWorkType,
+  type CrossrefWork,
+} from './schemas';
 
 /**
  * Identification is by query parameter, never by `User-Agent`.
@@ -94,11 +108,6 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 const defaultTransport: HttpTransport = (url, init) => fetch(url, init);
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 /** Only the two fields a contributor needs; CSL wants family/given separately. */
 function toContributors(work: CrossrefWork): LiteratureRecord['authors'] {
@@ -206,8 +215,9 @@ export function createCrossrefClient(config: LiteratureClientConfig = {}): Cross
     const url = withContact(`${baseUrl}${path}`, contactEmail);
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      throwIfAborted(signal);
       const elapsed = Date.now() - lastRequestAt;
-      if (elapsed < pacingMs) await sleep(pacingMs - elapsed);
+      if (elapsed < pacingMs) await abortableSleep(pacingMs - elapsed, signal);
 
       const controller = new AbortController();
       const onAbort = (): void => {
@@ -249,7 +259,7 @@ export function createCrossrefClient(config: LiteratureClientConfig = {}): Cross
             { code: String(response.status) },
           );
         }
-        await sleep(backoffMs(attempt, response.headers.get('Retry-After')));
+        await abortableSleep(backoffMs(attempt, response.headers.get('Retry-After')), signal);
         continue;
       }
 
@@ -315,10 +325,12 @@ export function createCrossrefClient(config: LiteratureClientConfig = {}): Cross
       signal?: AbortSignal,
     ): Promise<LiteratureRecord[]> {
       const rows = Math.max(1, Math.min(limit, 100));
+      const poolRows = Math.min(rows * 2, 100);
       const prefixes = OPENRXIV_PREFIXES.map((prefix) => `prefix:${prefix}`).join(',');
       const path =
         `/works?query=${encodeURIComponent(queryText(query))}` +
-        `&filter=type:posted-content,${prefixes}&rows=${String(rows)}`;
+        `&filter=type:posted-content,${prefixes}&rows=${String(poolRows)}` +
+        `&select=DOI,title,author,container-title,issued,abstract,type,URL,member,institution,group-title`;
 
       const works = parseWorkList(await request(path, signal));
       const pattern = SERVER_PATTERNS[server];
@@ -335,7 +347,8 @@ export function createCrossrefClient(config: LiteratureClientConfig = {}): Cross
         })
         .map(toRecord)
         .filter((record): record is LiteratureRecord => record !== null)
-        .map((record) => ({ ...record, type: 'preprint' as const }));
+        .slice(0, rows)
+        .map((record) => ({ ...record, type: 'preprint' as const, discoveredVia: server }));
     },
 
     async lookupUpdates(
@@ -353,7 +366,11 @@ export function createCrossrefClient(config: LiteratureClientConfig = {}): Cross
 
         try {
           const payload = await request(`/works?filter=${filter}&rows=100`, signal);
-          const notices = parseWorkList(payload);
+          const notices = parseNoticeList(payload);
+          if (notices === null) {
+            for (const doi of batch) results.set(doi, { checked: false, updates: [] });
+            continue;
+          }
           for (const doi of batch) {
             results.set(doi, { checked: true, updates: toUpdatesFor(doi, notices) });
           }

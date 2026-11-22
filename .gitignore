@@ -4,10 +4,14 @@ coverage/
 playwright-report/
 test-results/
 *.local
-.env.local
+*.tsbuildinfo
+.env
+.env.*
+!.env.browser
 .DS_Store
 
-# Editor / IDE
+# Editor / IDE / AI assistants
+.claude/
 .idea/
 .vscode/*
 !.vscode/extensions.json
