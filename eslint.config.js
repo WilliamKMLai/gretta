@@ -176,7 +176,7 @@ export default tseslint.config(
 
   // The knowledge-base companion is authored in strict TypeScript and RUN by
   // Node's type stripping (ADR-020) — so it stays type-checked, but may only
-  // use erasable syntax. Anything Node cannot strip is a lint error here.
+  // use erasable syntax and `import type` across the src/ boundary.
   {
     files: ['scripts/kb/**/*.mts'],
     languageOptions: { globals: { ...globals.node } },
@@ -188,6 +188,19 @@ export default tseslint.config(
         {
           selector: 'TSParameterProperty',
           message: 'Erasable TS only (ADR-020): no constructor parameter properties.',
+        },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/src/**'],
+              allowTypeImports: true,
+              message:
+                'Companion runs on Node ESM without Vite; only import type may cross from src/ (ADR-020).',
+            },
+          ],
         },
       ],
     },

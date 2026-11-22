@@ -20,7 +20,7 @@
  * It is safe to re-run. Nothing here is destructive.
  */
 import { execSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
@@ -28,6 +28,12 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const isMac = platform() === 'darwin';
+const isWindows = platform() === 'win32';
+const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+const pinnedPnpm =
+  typeof pkg.packageManager === 'string' && /^pnpm@[\w.-]+$/u.test(pkg.packageManager)
+    ? pkg.packageManager
+    : 'pnpm@11.13.1';
 
 const RESET = '\u001b[0m';
 const BOLD = '\u001b[1m';
@@ -57,7 +63,8 @@ const hint = (message) => {
 
 /** Runs a command, returning stdout or null. Never throws. */
 function tryRun(command, args) {
-  const result = spawnSync(command, args, { encoding: 'utf8', shell: false });
+  const bin = isWindows && command === 'pnpm' ? 'pnpm.cmd' : command;
+  const result = spawnSync(bin, args, { encoding: 'utf8', shell: false });
   if (result.error !== undefined || result.status !== 0) return null;
   return (result.stdout ?? '').trim();
 }
@@ -73,11 +80,13 @@ console.log(`${DIM}Local-first writing assistance for Word. Nothing here contact
 console.log(`except your package manager.${RESET}`);
 
 step('1. Node');
-const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] ?? '0', 10);
-if (nodeMajor >= 22) {
+const [rawMajor = '0', rawMinor = '0'] = process.versions.node.split('.');
+const nodeMajor = Number.parseInt(rawMajor, 10);
+const nodeMinor = Number.parseInt(rawMinor, 10);
+if (nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 13)) {
   ok(`Node ${process.versions.node}`);
 } else {
-  fail(`Node ${process.versions.node} is too old — GRETTA needs 22 or newer.`);
+  fail(`Node ${process.versions.node} is too old — GRETTA needs Node 22.13 or newer.`);
   hint('Install Node from https://nodejs.org, or run this in Terminal: brew install node');
 }
 
@@ -86,9 +95,9 @@ const pnpmVersion = tryRun('pnpm', ['--version']);
 if (pnpmVersion !== null) {
   ok(`pnpm ${pnpmVersion}`);
 } else {
-  warn('pnpm is not installed. Installing it now via corepack.');
+  warn(`pnpm is not installed. Installing ${pinnedPnpm} now via corepack.`);
   try {
-    run('corepack enable && corepack prepare pnpm@latest --activate');
+    run(`corepack enable && corepack prepare ${pinnedPnpm} --activate`);
     ok('pnpm installed');
   } catch {
     fail('Could not install pnpm automatically.');
@@ -115,7 +124,10 @@ const certDir = join(homedir(), '.office-addin-dev-certs');
 if (existsSync(join(certDir, 'localhost.crt'))) {
   ok('Development certificate already trusted');
 } else {
-  warn('No development certificate found. Creating one — macOS will ask for your password.');
+  const trustPrompt = isMac
+    ? 'macOS will ask for your password.'
+    : 'your OS may prompt to trust the certificate.';
+  warn(`No development certificate found. Creating one — ${trustPrompt}`);
   try {
     run('pnpm certs:install');
   } catch {
@@ -142,22 +154,27 @@ if (ollamaVersion === null) {
   ok(ollamaVersion.replace(/^ollama version is /iu, 'Ollama '));
 
   const models = tryRun('ollama', ['list']);
-  const lines = (models ?? '')
-    .split('\n')
-    .slice(1)
-    .filter((line) => line.trim() !== '');
-  if (lines.length === 0) {
-    warn('No models installed.');
-    hint('A text model is required — run this in Terminal: ollama pull llama3.2');
-    hint('An embedding model powers the knowledge base and literature ranking —');
-    hint('run this in Terminal: ollama pull nomic-embed-text');
+  if (models === null) {
+    warn('Ollama is installed, but the server is not running.');
+    hint('Open the Ollama app or run this in Terminal: ollama serve');
   } else {
-    ok(`${String(lines.length)} model${lines.length === 1 ? '' : 's'} installed`);
-    // The embedding model is easy to forget: without one, the knowledge base
-    // cannot index and literature results fall back to word overlap.
-    if (!/embed/iu.test(models ?? '')) {
-      warn('None of them looks like an embedding model.');
-      hint('Run this in Terminal: ollama pull nomic-embed-text');
+    const lines = models
+      .split('\n')
+      .slice(1)
+      .filter((line) => line.trim() !== '');
+    if (lines.length === 0) {
+      warn('No models installed.');
+      hint('A text model is required — run this in Terminal: ollama pull llama3.2');
+      hint('An embedding model powers the knowledge base and literature ranking —');
+      hint('run this in Terminal: ollama pull nomic-embed-text');
+    } else {
+      ok(`${String(lines.length)} model${lines.length === 1 ? '' : 's'} installed`);
+      // The embedding model is easy to forget: without one, the knowledge base
+      // cannot index and literature results fall back to word overlap.
+      if (!/embed/iu.test(models)) {
+        warn('None of them looks like an embedding model.');
+        hint('Run this in Terminal: ollama pull nomic-embed-text');
+      }
     }
   }
 }

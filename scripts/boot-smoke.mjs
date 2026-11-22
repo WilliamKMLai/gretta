@@ -160,14 +160,16 @@ console.log(`[boot-smoke] boot-failure panel: ${bootPanel}`);
 if (errorPanel !== null && !shellUp) {
   console.log(`[boot-smoke] alert content: ${errorPanel.textContent?.slice(0, 300)}`);
 }
-const fatal = problems.filter((p) => !p.includes('11434')); // Ollama-off is the expected failure
+// Expected offline probe failures when Ollama (:11434), the Mac proxy (:11435),
+// and the KB companion (:11436) are not running during this standalone check.
+const fatal = problems.filter((p) => !/1143[456]/.test(p));
 if (fatal.length > 0) {
   console.log('[boot-smoke] captured problems:');
   for (const p of fatal) console.log(`  - ${p.split('\n').slice(0, 4).join('\n    ')}`);
 }
-if (shellUp && !bootPanel) {
+if (shellUp && !bootPanel && fatal.length === 0) {
   console.log('[boot-smoke] PASS — the built bundle boots to the GRETTA shell.');
   process.exit(0);
 }
-console.error('[boot-smoke] FAIL — bundle did not reach the shell.');
+console.error('[boot-smoke] FAIL — bundle did not reach a clean shell.');
 process.exit(1);

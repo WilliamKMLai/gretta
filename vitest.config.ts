@@ -34,22 +34,23 @@ export default defineConfig({
      *
      * Separating the runs removes the mixing rather than papering over it.
      *
-     * store.sqlite.test.mts (the only file loading the better-sqlite3 native
-     * addon) is excluded too. In CI it has crashed its Vitest worker under
-     * the default `forks` pool ("Worker exited unexpectedly" —
-     * vitest-dev/vitest#8968 et al.), under `threads` (an actual SIGSEGV),
+     * store.sqlite.test.mts and migrate.test.mts (the files loading the
+     * better-sqlite3 native addon) are excluded too. In CI it has crashed its
+     * Vitest worker under the default `forks` pool ("Worker exited unexpectedly"
+     * — vitest-dev/vitest#8968 et al.), under `threads` (an actual SIGSEGV),
      * and even with a from-source rebuild of the addon ruling out a prebuild
      * ABI mismatch — three different causes tried and ruled out, and it has
      * never failed locally. Whatever's wrong is specific to how Vitest 4
      * manages worker processes around this native module on that runner.
-     * Run it manually with `pnpm test:kb-native`; move it back once
+     * Run them manually with `pnpm test:kb-native`; move them back once
      * upstream stabilizes.
      */
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
       'src/**/*.smoke.test.ts',
-      'scripts/kb/store.sqlite.test.mts',
+      'scripts/kb/**/*.sqlite.test.mts',
+      'scripts/kb/migrate.test.mts',
     ],
     css: false,
   },
